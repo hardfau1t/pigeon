@@ -6,8 +6,12 @@ use tracing_subscriber::filter::LevelFilter;
 #[command(author, version, about)]
 /// make rest queries, automate
 struct Arguments {
-    #[arg(short, long, action=clap::ArgAction::Count)]
+    #[arg(short, long, global=true, action=clap::ArgAction::Count)]
     verbose: u8,
+    /// prefix directory, where all the data is stored
+    /// default = ~/.local/share/pigeon
+    #[arg(short, long)]
+    prefix: Option<std::path::PathBuf>,
     #[command(subcommand)]
     function: Functionalities,
 }
@@ -42,9 +46,10 @@ async fn main() -> Result<(), anyhow::Error> {
         .with_writer(std::io::stderr)
         .init();
     debug!("Log level set to : {log_level:?}");
-
+    let mut local_dir = args.prefix.or_else(dirs::data_local_dir).unwrap();
+    local_dir.push(env!("CARGO_PKG_NAME"));
     match args.function {
-        Functionalities::Rest(rest_args) => pigeon::rest::handler(&rest_args),
+        Functionalities::Rest(rest_args) => pigeon::rest::handler(&rest_args, &local_dir).await,
         Functionalities::Sql => todo!(),
     }
 }
