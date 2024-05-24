@@ -9,8 +9,10 @@ use tracing::{debug, info};
 pub struct Arguments {
     #[command(subcommand)]
     action: Actions,
-    #[arg(short = 'f', long, default_value = "rest_apis.json")]
-    api_file: std::path::PathBuf,
+    /// use this file for api list
+    /// if this is not specified then <service name>.json will be used as api file
+    #[arg(short = 'f', long)]
+    api_file: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Subcommand, Debug, Clone)]
@@ -131,6 +133,9 @@ async fn execute(api_file_path: &impl AsRef<std::path::Path>, api_name: &str) ->
     info!("Executing Request: {req:?}");
     let resp = client.execute(req).await?;
     info!("Recieved Response: {resp:?}");
+    if resp.status().is_success(){
+        println!("{}", resp.text().await?);
+    }
     Ok(())
 }
 

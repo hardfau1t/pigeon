@@ -1,0 +1,39 @@
+version = "0.1.0"
+
+[[environments]]
+name = "staging"
+
+[[environments.service]]
+name = "order_handler"
+scheme = "https"
+host = "127.0.0.1:8080"
+
+[[environments.service]]
+name = "session_manager"
+scheme = "https"
+host = "127.0.0.1:8080"
+
+
+[[environments]]
+name = "dev"
+
+[[environments.service]]
+name = "order_handler"
+scheme = "http"
+host = "127.0.0.1:5001"
+
+[[environments.service]]
+name = "session_manager"
+scheme = "http"
+host = "127.0.0.1:5009"
+
+[[service]]
+name = "order_handler"
+[[service.endpoint]]
+name = "order_info"
+alias = "oi"
+
+[[service]]
+name = "session_manager"
+
+[[service.endpoint]]
