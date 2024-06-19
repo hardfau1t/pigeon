@@ -1,4 +1,5 @@
 use clap::Parser;
+use pigeon::parse_and_run;
 use tracing::debug;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -11,10 +12,13 @@ struct Arguments {
     /// configuration file containing queries
     #[arg(short, long, default_value = "./pigeon.toml")]
     config_file: std::path::PathBuf,
+    #[arg()]
+    service: String,
+    #[arg()]
+    endpoint: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+fn main() -> Result<(), anyhow::Error> {
     let args = Arguments::parse();
     let log_level = match args.verbose {
         0 => LevelFilter::WARN,
@@ -35,5 +39,5 @@ async fn main() -> Result<(), anyhow::Error> {
         .with_writer(std::io::stderr)
         .init();
     debug!("Log level set to : {log_level:?}");
-    Ok(())
+    parse_and_run(&args.config_file, &args.service, &args.endpoint)
 }
