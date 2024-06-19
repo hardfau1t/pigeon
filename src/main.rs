@@ -1,6 +1,6 @@
 use clap::Parser;
-use pigeon::parse_and_run;
-use tracing::debug;
+use pigeon::{execute, Document};
+use tracing::{debug, error, info};
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, clap::Parser)]
@@ -12,10 +12,18 @@ struct Arguments {
     /// configuration file containing queries
     #[arg(short, long, default_value = "./pigeon.toml")]
     config_file: std::path::PathBuf,
+    /// list available options (services/endpoints)
+    #[arg(short, long)]
+    list: bool,
+    #[arg(required_unless_present("list"))]
+    service: Option<String>,
     #[arg()]
-    service: String,
-    #[arg()]
-    endpoint: String,
+    #[arg(required_unless_present("list"))]
+    endpoint: Option<String>,
+    /// arguments for hooks, note to make it unamgious add -- before providing any flags
+    /// add another -- separator to separate between prehook flags and post hook flags
+    #[arg(trailing_var_arg(true), allow_hyphen_values(true))]
+    args: Vec<String>,
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -39,5 +47,51 @@ fn main() -> Result<(), anyhow::Error> {
         .with_writer(std::io::stderr)
         .init();
     debug!("Log level set to : {log_level:?}");
-    parse_and_run(&args.config_file, &args.service, &args.endpoint)
+    debug!(extra_args=?args.args);
+    let document = toml::from_str::<Document>(&std::fs::read_to_string(&args.config_file)?)?;
+    info!(file=?args.config_file, "parsed succesfully");
+    if args.list {
+        // if service name is present then then list end points
+        if let Some(service_name) = args.service {
+            if let Some(svc) = document.get_service(&service_name) {
+                // if endpoint is present then dump the content of endpoint
+                if let Some(ep_name) = args.endpoint {
+                    if let Some(ep) = svc.get_endpoint(&ep_name) {
+                        info!(endpoint=?ep, "endpoint:");
+                        Ok(())
+                    } else {
+                        error!(service = service_name, "Couldn't find service");
+                        Err(anyhow::anyhow!("Failed to list services"))
+                    }
+                } else {
+                    svc.endpoint
+                        .iter()
+                        .for_each(|ep| info!(name=ep.name, alias=?ep.alias, "endpoint:"));
+                    Ok(())
+                }
+            } else {
+                error!(service = service_name, "Couldn't find service");
+                Err(anyhow::anyhow!("Failed to list services"))
+            }
+        } else {
+            // list services since service name is not present
+            Some(
+                document
+                    .services
+                    .iter()
+                    .for_each(|svc| info!(name=svc.name, alias=?svc.alias, "service:")),
+            );
+            Ok(())
+        }
+    } else {
+        let Some(service_name) = args.service else {
+            error!("service is required field, unless listing");
+            return Err(anyhow::anyhow!("missing param"));
+        };
+        let Some(endpoint_name) = args.endpoint else {
+            error!("service is required field, unless listing");
+            return Err(anyhow::anyhow!("missing param"));
+        };
+        execute(&document, &service_name, &endpoint_name)
+    }
 }

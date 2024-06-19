@@ -6,12 +6,24 @@ pub mod constants;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Document {
+pub struct Document {
     version: String,
     #[serde(rename = "environment")]
     environments: Vec<Environment>,
     #[serde(rename = "service")]
-    services: Vec<Service>,
+    pub services: Vec<Service>,
+}
+
+impl Document {
+    pub fn get_service(&self, service_name: &str) -> Option<&Service> {
+        self.services.iter().find(|svc| {
+            svc.name == service_name
+                || svc
+                    .alias
+                    .as_ref()
+                    .is_some_and(|alias| alias == service_name)
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,18 +53,26 @@ impl TryInto<url::Url> for &ServiceEnv {
 /// represents single microservice
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Service {
-    name: String,
-    alias: Option<String>,
-    endpoint: Vec<EndPoint>,
+pub struct Service {
+    pub name: String,
+    pub alias: Option<String>,
+    pub endpoint: Vec<EndPoint>,
+}
+
+impl Service {
+    pub fn get_endpoint(&self, ep_name: &str) -> Option<&EndPoint> {
+        self.endpoint.iter().find(|ep| {
+            ep.name == ep_name || ep.alias.as_ref().is_some_and(|alias| alias == ep_name)
+        })
+    }
 }
 
 /// represents one endpoint of given microservice
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EndPoint {
-    name: String,
-    alias: Option<String>,
+pub struct EndPoint {
+    pub name: String,
+    pub alias: Option<String>,
     method: Method,
     #[serde(default)]
     headers: Vec<(String, String)>,
@@ -137,13 +157,11 @@ where
 }
 
 /// parses document and run given query
-pub fn parse_and_run(
-    document_path: &impl AsRef<std::path::Path>,
+pub fn execute(
+    document: &Document,
     service_name: &str,
     endpoint_name: &str,
 ) -> Result<(), anyhow::Error> {
-    let document = toml::from_str::<Document>(&std::fs::read_to_string(document_path.as_ref())?)?;
-    info!(file=?document_path.as_ref(), "parsed succesfully");
     let current_env = std::env::var(constants::KEY_CURRENT_ENVIRONMENT)?;
     // get service with given service_name
     let service = document
