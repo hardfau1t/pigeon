@@ -23,6 +23,15 @@ name = "method-get"
 alias = "get"
 method = "get"
 path = "/get"
-headers = [["abc", "def"]]
+headers = [["x-abc", "d, ef"], ["x-abc", "huh"]]
 [[service.endpoint.pre_hook]]
 script  = "./example-prehook.nu"
+
+[[service.endpoint]]
+name = "method-post"
+alias = "post"
+method = "post"
+path = "/post"
+headers = [["key", "value"]]
+body = {kind = "application/json", data = '{"a": "b", "c": [1,2,3]}'}
+
