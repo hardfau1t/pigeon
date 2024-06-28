@@ -1,12 +1,13 @@
-use serde::Deserialize;
-use std::{io::Write, str::FromStr};
-use tracing::{debug, info};
+use serde::{Deserialize, Serialize};
+use std::{borrow::Cow, collections::HashMap, io::Write, str::FromStr};
+use tracing::{debug, error, info};
 
 pub mod constants;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
+    #[allow(dead_code)]
     version: String,
     #[serde(rename = "environment")]
     environments: Vec<Environment>,
@@ -79,10 +80,8 @@ pub struct EndPoint {
     #[serde(default)]
     params: Vec<(String, String)>,
     body: Option<Body>,
-    #[serde(default)]
-    pre_hook: Vec<Hook>,
-    #[serde(default)]
-    post_hook: Vec<Hook>,
+    pre_hook: Option<Vec<Hook>>,
+    post_hook: Option<Vec<Hook>>,
     #[serde(default)]
     flags: Vec<String>,
     path: String,
@@ -243,13 +242,48 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
         );
-    let response = if let Some(ref body) = endpoint.body {
-        let data = match &body.data {
-            BodyData::Path(file_path) => std::fs::read_to_string(file_path)?,
-            BodyData::Inline(data) => data.clone(),
-        };
+    // if there is body then set request with kind and return some body else just return req
+    // HACK: can't use map_or becausecurrently rust can't differenciate whether one of two closure would get executed so it moves into both, thus that requires clone
+    // that would look like this
+    // .map_or((req, None), |(kind, content)| {
+    //     (req.set("Content-Type", kind), Some(content))
+    // });
+    let (req, body) = if let Some((content_type, body)) = endpoint
+        .body
+        .as_ref()
+        .map(|body| {
+            match &body.data {
+                BodyData::Inline(b) => Ok(b.clone()),
+                BodyData::Path(path) => std::fs::read_to_string(path),
+            }
+            .map(|content| (&body.kind, content))
+        })
+        .transpose()?
+    {
+        (req.set("Content-Type", content_type), Some(body))
+    } else {
+        (req, None)
+    };
+    let flags = endpoint
+        .flags
+        .iter()
+        .map(|flag| flag.as_str())
+        .collect::<Vec<_>>();
+    let f = flags.as_slice();
+    // if prehook is present then execute pre hook else set the content type and return content
+    let (req, body) = if let Some(hooks) = endpoint.pre_hook.as_ref() {
+        hooks.iter().fold(
+            (req, body.map(|body_str| Vec::from(body_str.as_bytes()))),
+            |(req, body), hook| {
+                exec_prehook(req, body.as_ref().map(|b_vec| b_vec.as_slice()), hook, f)
+            },
+        )
+    } else {
+        (req, None)
+    };
+    let response = if let Some(ref body) = body {
         debug!(uri=?uri, request= ?req, "sending request");
-        req.set("Content-Type", &body.kind).send_string(&data)
+        req.send_bytes(body.as_slice())
     } else {
         debug!(uri=?uri, request= ?req, "sending request");
         req.call()
@@ -257,3 +291,117 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
     std::io::stdout().write_all(response.into_string()?.as_bytes())?;
     Ok(())
 }
+
+/// this will be given to prehook script
+#[derive(Debug, Serialize, Deserialize)]
+struct PreHookObject<'headers, 'params, 'body> {
+    #[serde(borrow)]
+    headers: HashMap<&'headers str, Vec<&'headers str>>,
+    #[serde(borrow)]
+    params: Vec<(&'params str, &'params str)>,
+    body: Option<&'body [u8]>,
+}
+/// this is the output of pre-hook script
+#[derive(Debug, Serialize, Deserialize)]
+struct PreHookObjectResponse {
+    headers: HashMap<String, Vec<String>>,
+    params: Vec<(String, String)>,
+    body: Option<Vec<u8>>,
+}
+
+/// this will be given to prehook script
+struct PostHookObject<'r> {
+    headers: HashMap<&'r str, Vec<&'r str>>,
+    params: Vec<(&'r str, &'r str)>,
+    body: Option<&'r [u8]>,
+}
+
+fn exec_prehook(
+    req: ureq::Request,
+    body: Option<&[u8]>,
+    hook: &Hook,
+    flags: &[&str],
+) -> (ureq::Request, Option<Vec<u8>>) {
+    let header_keys = req.header_names();
+    let headers: HashMap<_, _> = header_keys
+        .iter()
+        .map(|header_name| (header_name.as_str(), req.all(header_name)))
+        .collect();
+    let url = req.url();
+    let query_params =
+        url::Url::parse(url).expect("Invalid url shouldn't be accepted in the first place");
+    let query_pairs_pars: Vec<_> = query_params.query_pairs().collect();
+    let params = query_pairs_pars
+        .iter()
+        .map(|(ref key, ref val)| (Cow::as_ref(key), Cow::as_ref(val)))
+        .collect::<Vec<(&'_ str, &'_ str)>>();
+
+    let obj = PreHookObject {
+        headers,
+        params,
+        body,
+    };
+    debug!("pre-hook obj sending to pre-hook: {obj:?}");
+    // size will always be larger than obj, but atleast optimize is for single allocation
+    let body_buf = rmp_serde::encode::to_vec_named(&obj).unwrap_or_else(|e| {
+        error!("Failed to serialize pre-hook obj: {e}");
+        panic!("Failed to call pre-hook")
+    });
+
+    match hook {
+        Hook::Closure(_) => unimplemented!("Currently closures are not supported"),
+        Hook::Path(path) => {
+            info!("Executing pre-hook script");
+            let mut child = std::process::Command::new(path)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .args(flags)
+                .spawn()
+                .unwrap_or_else(|e| {
+                    error!("Failed to spawn {path:?} : {e}");
+                    panic!("Failed call pre-hook")
+                });
+            debug!("writing to child: {body_buf:?}");
+            child
+                .stdin
+                .take()
+                .expect("Childs stdin is not open, eventhough body is present")
+                .write_all(&body_buf)
+                .unwrap_or_else(|e| {
+                    error!("Failed to write body data: {e}");
+                    panic!("Couldn't pass body to pre-hook")
+                });
+            let output = child.wait_with_output().unwrap_or_else(|e| {
+                error!("Failed to read pre-hook stdout: {e}");
+                panic!("Couldn't read pre-hook output")
+            });
+            let mut pre_hook_obj: PreHookObjectResponse =
+                rmp_serde::from_slice(output.stdout.as_ref()).unwrap_or_else(|e| {
+                    error!("Failed to deserialize pre-hook output: {e}");
+                    panic!("Unexpected pre-hook output")
+                });
+            debug!(
+                "pre-hook stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let body = pre_hook_obj.body.take();
+            let req = ureq::request(req.method(), req.url());
+            // set all headers
+            let req = pre_hook_obj
+                .headers
+                .iter()
+                .fold(req, |req, (key, values)| {
+                    values.iter().fold(req, |req, value| req.set(key, value))
+                })
+                .query_pairs(
+                    pre_hook_obj
+                        .params
+                        .iter()
+                        .map(|(ref key, ref val)| (key.as_str(), val.as_str())),
+                );
+            (req, body)
+        }
+    }
+}
+
+fn exec_posthook(resp: ureq::Response, hook: Hook) {}

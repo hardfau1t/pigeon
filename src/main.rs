@@ -57,7 +57,7 @@ fn main() -> Result<(), anyhow::Error> {
                 // if endpoint is present then dump the content of endpoint
                 if let Some(ep_name) = args.endpoint {
                     if let Some(ep) = svc.get_endpoint(&ep_name) {
-                        info!(endpoint=?ep, "endpoint:");
+                        println!("endpoint: {:#?}", ep);
                         Ok(())
                     } else {
                         error!(service = service_name, "Couldn't find service");
@@ -66,7 +66,7 @@ fn main() -> Result<(), anyhow::Error> {
                 } else {
                     svc.endpoint
                         .iter()
-                        .for_each(|ep| info!(name=ep.name, alias=?ep.alias, "endpoint:"));
+                        .for_each(|ep| println!("name={}, alias={:?}", ep.name, ep.alias));
                     Ok(())
                 }
             } else {
@@ -79,7 +79,7 @@ fn main() -> Result<(), anyhow::Error> {
                 document
                     .services
                     .iter()
-                    .for_each(|svc| info!(name=svc.name, alias=?svc.alias, "service:")),
+                    .for_each(|svc| println!("name: {}, alias: {:?}", svc.name, svc.alias)),
             );
             Ok(())
         }
