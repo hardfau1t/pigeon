@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap, io::Write, str::FromStr};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 pub mod constants;
 
@@ -260,7 +260,10 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
         })
         .transpose()?
     {
-        (req.set("Content-Type", content_type), Some(body))
+        (
+            req.set("Content-Type", content_type),
+            Some(body.into_bytes()),
+        )
     } else {
         (req, None)
     };
@@ -272,22 +275,29 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
     let f = flags.as_slice();
     // if prehook is present then execute pre hook else set the content type and return content
     let (req, body) = if let Some(hooks) = endpoint.pre_hook.as_ref() {
-        hooks.iter().fold(
-            (req, body.map(|body_str| Vec::from(body_str.as_bytes()))),
-            |(req, body), hook| {
-                exec_prehook(req, body.as_ref().map(|b_vec| b_vec.as_slice()), hook, f)
-            },
-        )
+        hooks.iter().fold((req, body), |(req, body), hook| {
+            exec_prehook(req, body.as_ref().map(|b_vec| b_vec.as_slice()), hook, f)
+        })
     } else {
-        (req, None)
+        (req, body)
     };
     let response = if let Some(ref body) = body {
-        debug!(uri=?uri, request= ?req, "sending request");
+        info!( request= ?req, body= ?body, "sending request with body");
         req.send_bytes(body.as_slice())
     } else {
-        debug!(uri=?uri, request= ?req, "sending request");
+        info!( request= ?req, "sending request");
         req.call()
     }?;
+    let resp_header_names = response.headers_names();
+
+    let resp_headers = resp_header_names
+        .iter()
+        .map(|name| {
+            let vals = response.all(name.as_str());
+            (name, vals)
+        })
+        .collect::<HashMap<_, _>>();
+    info!("response headers: {resp_headers:#?}");
     std::io::stdout().write_all(response.into_string()?.as_bytes())?;
     Ok(())
 }
@@ -351,7 +361,7 @@ fn exec_prehook(
     match hook {
         Hook::Closure(_) => unimplemented!("Currently closures are not supported"),
         Hook::Path(path) => {
-            info!("Executing pre-hook script");
+            trace!("Executing pre-hook script");
             let mut child = std::process::Command::new(path)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
