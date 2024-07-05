@@ -33,5 +33,13 @@ alias = "post"
 method = "post"
 path = "/post"
 headers = [["key", "value"]]
-body = {kind = "application/json", data = '{"a": "b", "c": [1,2,3]}'}
+[service.endpoint.body]
+kind = "application/json"
+data = '{"a": "b", "c": [1,2,3]}'
 
+
+[[service.endpoint]]
+name = "dyn data bytes get"
+alias = "bytes"
+method = "get"
+path = "/bytes/100"

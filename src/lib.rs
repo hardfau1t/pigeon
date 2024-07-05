@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap, io::Write, str::FromStr};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 pub mod constants;
 
@@ -288,17 +288,28 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
         info!( request= ?req, "sending request");
         req.call()
     }?;
-    let resp_header_names = response.headers_names();
 
-    let resp_headers = resp_header_names
-        .iter()
-        .map(|name| {
-            let vals = response.all(name.as_str());
-            (name, vals)
-        })
-        .collect::<HashMap<_, _>>();
-    info!("response headers: {resp_headers:#?}");
-    std::io::stdout().write_all(response.into_string()?.as_bytes())?;
+    if let Some(post_hook) = &endpoint.post_hook {
+        let obj = PostHookObject::from(response);
+        let final_obj = post_hook
+            .iter()
+            .fold(obj, |last_obj, hook| exec_posthook(&last_obj, hook, &[]));
+        info!("response headers: {:#?}", final_obj.headers);
+        std::io::stdout().write_all(final_obj.body.as_ref())?;
+    } else {
+        let resp_header_names = response.headers_names();
+        let resp_headers = resp_header_names
+            .iter()
+            .map(|name| {
+                let vals = response.all(name.as_str());
+                (name, vals)
+            })
+            .collect::<HashMap<_, _>>();
+        info!("response headers: {resp_headers:#?}");
+        let mut body = Vec::new();
+        response.into_reader().read_to_end(&mut body)?;
+        std::io::stdout().write_all(&body)?;
+    }
     Ok(())
 }
 
@@ -320,10 +331,51 @@ struct PreHookObjectResponse {
 }
 
 /// this will be given to prehook script
-struct PostHookObject<'r> {
-    headers: HashMap<&'r str, Vec<&'r str>>,
-    params: Vec<(&'r str, &'r str)>,
-    body: Option<&'r [u8]>,
+#[derive(Debug, Deserialize, Serialize)]
+struct PostHookObject {
+    headers: HashMap<String, Vec<String>>,
+    body: Vec<u8>,
+    status: u16,
+    status_text: String,
+}
+
+impl From<ureq::Response> for PostHookObject {
+    fn from(response: ureq::Response) -> Self {
+        let mut body = Vec::new();
+        let header_keys = response.headers_names();
+        let status = response.status();
+        let status_text = response.status_text().to_string();
+        let headers: HashMap<_, _> = header_keys
+            .into_iter()
+            .map(|header_name| {
+                let vals = response
+                    .all(&header_name)
+                    .iter()
+                    .map(|val_ref| val_ref.to_string())
+                    .collect();
+                (header_name, vals)
+            })
+            .collect();
+        if let Err(e) = response.into_reader().read_to_end(&mut body) {
+            warn!("Error while reading response body: {e}, truncate body");
+            body.clear();
+        };
+        PostHookObject {
+            headers,
+            body,
+            status,
+            status_text,
+        }
+    }
+}
+
+/// this will be given to prehook script
+#[derive(Debug, Deserialize, Serialize)]
+struct PostHookObjectResponse {
+    headers: HashMap<String, Vec<String>>,
+    body: Option<Vec<u8>>,
+    status: u16,
+    status_text: String,
 }
 
 fn exec_prehook(
@@ -414,4 +466,50 @@ fn exec_prehook(
     }
 }
 
-fn exec_posthook(resp: ureq::Response, hook: Hook) {}
+fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookObject {
+    // size will always be larger than obj, but atleast optimize is for single allocation
+    let body_buf = rmp_serde::encode::to_vec_named(&obj).unwrap_or_else(|e| {
+        error!("Failed to serialize pre-hook obj: {e}");
+        panic!("Failed to call pre-hook")
+    });
+
+    match hook {
+        Hook::Closure(_) => unimplemented!("Currently closures are not supported"),
+        Hook::Path(path) => {
+            trace!("Executing post-hook script");
+            let mut child = std::process::Command::new(path)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .args(flags)
+                .spawn()
+                .unwrap_or_else(|e| {
+                    error!("Failed to spawn {path:?} : {e}");
+                    panic!("Failed call pre-hook")
+                });
+            debug!("writing to child: {body_buf:?}");
+            child
+                .stdin
+                .take()
+                .expect("Childs stdin is not open, eventhough body is present")
+                .write_all(&body_buf)
+                .unwrap_or_else(|e| {
+                    error!("Failed to write body data: {e}");
+                    panic!("Couldn't pass body to pre-hook")
+                });
+            let output = child.wait_with_output().unwrap_or_else(|e| {
+                error!("Failed to read pre-hook stdout: {e}");
+                panic!("Couldn't read pre-hook output")
+            });
+            let post_hook_resp =
+                rmp_serde::from_slice(output.stdout.as_ref()).unwrap_or_else(|e| {
+                    error!("Failed to deserialize pre-hook output: {e}");
+                    panic!("Unexpected pre-hook output")
+                });
+            debug!(
+                "pre-hook stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            post_hook_resp
+        }
+    }
+}
