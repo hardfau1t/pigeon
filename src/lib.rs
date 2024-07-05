@@ -420,6 +420,7 @@ fn exec_prehook(
             let mut child = std::process::Command::new(path)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .args(flags)
                 .spawn()
                 .unwrap_or_else(|e| {
@@ -483,6 +484,7 @@ fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookO
             let mut child = std::process::Command::new(path)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .args(flags)
                 .spawn()
                 .unwrap_or_else(|e| {
@@ -509,7 +511,7 @@ fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookO
                     panic!("Unexpected pre-hook output")
                 });
             debug!(
-                "pre-hook stderr: {}",
+                "post-hook stderr: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
             post_hook_resp
