@@ -295,7 +295,10 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
             .iter()
             .fold(obj, |last_obj, hook| exec_posthook(&last_obj, hook, &[]));
         info!("response headers: {:#?}", final_obj.headers);
-        std::io::stdout().write_all(final_obj.body.as_ref())?;
+        info!("response status: {:#?}, status_text: {:#?}", final_obj.status, final_obj.status_text);
+        if let Some(data) = final_obj.body.as_ref() {
+            std::io::stdout().write_all(data)?;
+        }
     } else {
         let resp_header_names = response.headers_names();
         let resp_headers = resp_header_names
@@ -334,7 +337,7 @@ struct PreHookObjectResponse {
 #[derive(Debug, Deserialize, Serialize)]
 struct PostHookObject {
     headers: HashMap<String, Vec<String>>,
-    body: Vec<u8>,
+    body: Option<Vec<u8>>,
     status: u16,
     status_text: String,
 }
@@ -362,7 +365,7 @@ impl From<ureq::Response> for PostHookObject {
         };
         PostHookObject {
             headers,
-            body,
+            body: Some(body),
             status,
             status_text,
         }
