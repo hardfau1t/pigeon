@@ -140,7 +140,7 @@ impl std::string::ToString for Method {
 #[serde(deny_unknown_fields)]
 #[serde(rename_all = "snake_case")]
 enum Hook {
-    Closure(String),
+    Closure(()),
     #[serde(rename = "script")]
     Path(std::path::PathBuf),
 }
