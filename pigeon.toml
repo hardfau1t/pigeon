@@ -43,3 +43,5 @@ name = "dyn data bytes get"
 alias = "bytes"
 method = "get"
 path = "/bytes/100"
+[[service.endpoint.post_hook]]
+script = "./example-posthook.nu"
