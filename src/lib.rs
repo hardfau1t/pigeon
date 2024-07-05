@@ -441,6 +441,7 @@ fn exec_prehook(
                 error!("Failed to read pre-hook stdout: {e}");
                 panic!("Couldn't read pre-hook output")
             });
+            debug!(output=?output.stdout, "pre-hook output");
             let mut pre_hook_obj: PreHookObjectResponse =
                 rmp_serde::from_slice(output.stdout.as_ref()).unwrap_or_else(|e| {
                     error!("Failed to deserialize pre-hook output: {e}");
@@ -505,6 +506,7 @@ fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookO
                 error!("Failed to read pre-hook stdout: {e}");
                 panic!("Couldn't read pre-hook output")
             });
+            debug!(output=?output.stdout, "post-hook output");
             let post_hook_resp =
                 rmp_serde::from_slice(output.stdout.as_ref()).unwrap_or_else(|e| {
                     error!("Failed to deserialize pre-hook output: {e}");
