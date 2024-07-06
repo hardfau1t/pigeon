@@ -228,7 +228,11 @@ pub fn execute(
 }
 
 fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
-    let uri = host.join(&endpoint.path)?;
+    let Ok(ep_path) = subst::substitute(&endpoint.path, &subst::Env) else {
+        error!("Failed to substitute {}", &endpoint.path);
+        panic!("endpoint path substition failed");
+    };
+    let uri = host.join(&ep_path)?;
     let req = ureq::request(&endpoint.method.to_string(), uri.as_str());
     debug!(headers = ?endpoint.headers);
     let req = endpoint

@@ -67,6 +67,14 @@ closure = "<inline>" # NOT YET SUPPORTED inline script, commands are directly wr
 script = "<path>" # path to script file
 ```
 
+### Path substitutions
+
+To keep it simple currently we are only supporting substitutions for path part of url.
+i.e. `/foo/${bar}` will try to replace bar with `$bar` from environment variable.
+If don't want to substitutions then escape `$` with `\`.
+NOTE: if you are using double quoted strings then you have to double escape it.
+
+
 ### Hooks
 
 Hooks takes msgpack serialized data and runs set of operations and writes serialized msgpack data to stdout.
