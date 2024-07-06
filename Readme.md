@@ -122,7 +122,10 @@ Note: whatever is written to stdout is considered as output and gets deserialize
     34,
     44,
     32,
-  ]
+  ],
+  "host": "httpbin.org",
+  "path": "/post",
+  "scheme": "http"
 }
 ```
 

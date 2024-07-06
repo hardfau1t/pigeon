@@ -322,12 +322,15 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
 
 /// this will be given to prehook script
 #[derive(Debug, Serialize, Deserialize)]
-struct PreHookObject<'headers, 'params, 'body> {
+struct PreHookObject<'headers, 'params, 'body, 'host> {
     #[serde(borrow)]
     headers: HashMap<&'headers str, Vec<&'headers str>>,
     #[serde(borrow)]
     params: Vec<(&'params str, &'params str)>,
     body: Option<&'body [u8]>,
+    host: &'host str,
+    path: &'host str,
+    scheme: &'host str,
 }
 /// this is the output of pre-hook script
 #[derive(Debug, Serialize, Deserialize)]
@@ -335,6 +338,9 @@ struct PreHookObjectResponse {
     headers: HashMap<String, Vec<String>>,
     params: Vec<(String, String)>,
     body: Option<Vec<u8>>,
+    host: String,
+    path: String,
+    scheme: String,
 }
 
 /// this will be given to prehook script
@@ -397,9 +403,9 @@ fn exec_prehook(
         .map(|header_name| (header_name.as_str(), req.all(header_name)))
         .collect();
     let url = req.url();
-    let query_params =
+    let parsed_url =
         url::Url::parse(url).expect("Invalid url shouldn't be accepted in the first place");
-    let query_pairs_pars: Vec<_> = query_params.query_pairs().collect();
+    let query_pairs_pars: Vec<_> = parsed_url.query_pairs().collect();
     let params = query_pairs_pars
         .iter()
         .map(|(ref key, ref val)| (Cow::as_ref(key), Cow::as_ref(val)))
@@ -409,6 +415,9 @@ fn exec_prehook(
         headers,
         params,
         body,
+        host: parsed_url.host_str().expect("Valid url was expected at this point"),
+        path: parsed_url.path(),
+        scheme: parsed_url.scheme(),
     };
     debug!("pre-hook obj sending to pre-hook: {obj:?}");
     // size will always be larger than obj, but atleast optimize is for single allocation
@@ -446,15 +455,15 @@ fn exec_prehook(
                 panic!("Couldn't read pre-hook output")
             });
             debug!(output=?output.stdout, "pre-hook output");
+            info!(
+                "pre-hook stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             let mut pre_hook_obj: PreHookObjectResponse =
                 rmp_serde::from_slice(output.stdout.as_ref()).unwrap_or_else(|e| {
                     error!("Failed to deserialize pre-hook output: {e}");
                     panic!("Unexpected pre-hook output")
                 });
-            debug!(
-                "pre-hook stderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
             let body = pre_hook_obj.body.take();
             let req = ureq::request(req.method(), req.url());
             // set all headers
@@ -511,15 +520,15 @@ fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookO
                 panic!("Couldn't read pre-hook output")
             });
             debug!(output=?output.stdout, "post-hook output");
+            info!(
+                "post-hook stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             let post_hook_resp =
                 rmp_serde::from_slice(output.stdout.as_ref()).unwrap_or_else(|e| {
                     error!("Failed to deserialize pre-hook output: {e}");
                     panic!("Unexpected pre-hook output")
                 });
-            debug!(
-                "post-hook stderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
             post_hook_resp
         }
     }
