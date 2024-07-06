@@ -33,9 +33,12 @@ alias = "post"
 method = "post"
 path = "/post"
 headers = [["key", "value"]]
+params = [["a", "b"], ["c", "d"]]
 [service.endpoint.body]
 kind = "application/json"
 data = '{"a": "b", "c": [1,2,3]}'
+[[service.endpoint.pre_hook]]
+script = "./example-prehook.nu"
 
 
 [[service.endpoint]]
