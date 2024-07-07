@@ -1,9 +1,12 @@
 #!/usr/bin/env -S nu --stdin --no-newline
 
-def main []: binary -> binary {
+def main [
+    --verbose(-v), # print input and output to stderr
+]: binary -> binary {
     let data = from msgpack
-    print -e ($data | to nuon)
+    if $verbose {
+        print -e ($data | to nuon)
+    }
     $data
-    | update body []
     | to msgpack | ^cat
 }

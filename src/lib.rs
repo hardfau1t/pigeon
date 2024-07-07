@@ -82,8 +82,6 @@ pub struct EndPoint {
     body: Option<Body>,
     pre_hook: Option<Hook>,
     post_hook: Option<Hook>,
-    #[serde(default)]
-    flags: Vec<String>,
     path: String,
 }
 
@@ -120,19 +118,20 @@ enum Method {
     Trace,
 }
 
-impl std::string::ToString for Method {
-    fn to_string(&self) -> String {
-        match self {
-            Method::Get => "GET".to_string(),
-            Method::Post => "POST".to_string(),
-            Method::Put => "PUT".to_string(),
-            Method::Delete => "DELETE".to_string(),
-            Method::Head => "HEAD".to_string(),
-            Method::Options => "OPTIONS".to_string(),
-            Method::Connect => "CONNECT".to_string(),
-            Method::Patch => "PATCH".to_string(),
-            Method::Trace => "TRACE".to_string(),
-        }
+impl std::fmt::Display for Method {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str_repr = match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+            Method::Head => "HEAD",
+            Method::Options => "OPTIONS",
+            Method::Connect => "CONNECT",
+            Method::Patch => "PATCH",
+            Method::Trace => "TRACE",
+        };
+        f.write_str(str_repr)
     }
 }
 
@@ -156,48 +155,34 @@ where
 }
 
 /// parses document and run given query
-pub fn parse_and_find_service(
+pub fn parse_and_exec_service(
     document: &Document,
     service_name: &str,
     endpoint_name: &str,
+    flags: &[&str],
 ) -> Result<(), anyhow::Error> {
     let current_env = std::env::var(constants::KEY_CURRENT_ENVIRONMENT)?;
     // get service with given service_name
     let service = document
         .services
         .iter()
-        .find_map(|svc| {
-            if svc.name == service_name
+        .find(|svc| {
+            svc.name == service_name
                 || svc
                     .alias
                     .as_ref()
                     .is_some_and(|alias| alias == service_name)
-            {
-                Some(svc)
-            } else {
-                None
-            }
         })
         .ok_or_else(|| anyhow::anyhow!("Failed to get service with name/alias: {service_name}"))?;
     // get the service config of given service in given environment
     let env = document
         .environments
         .iter()
-        .find_map(|env| {
-            if env.name == current_env {
-                Some(env)
-            } else {
-                None
-            }
-        })
+        .find(|env| env.name == current_env)
         .and_then(|env| {
-            env.service.iter().find_map(|service_env| {
-                if service_env.name == service.name {
-                    Some(service_env)
-                } else {
-                    None
-                }
-            })
+            env.service
+                .iter()
+                .find(|service_env| service_env.name == service.name)
         })
         .ok_or_else(|| {
             anyhow::anyhow!("Failed to get service: {service_name} from env: {current_env}")
@@ -206,17 +191,12 @@ pub fn parse_and_find_service(
     let endpoint = service
         .endpoint
         .iter()
-        .find_map(|ep| {
-            if ep.name == endpoint_name
+        .find(|ep| {
+            ep.name == endpoint_name
                 || ep
                     .alias
                     .as_ref()
                     .is_some_and(|alias| alias == endpoint_name)
-            {
-                Some(ep)
-            } else {
-                None
-            }
         })
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -224,10 +204,18 @@ pub fn parse_and_find_service(
             )
         })?;
     let host = env.try_into()?;
-    call_request(host, endpoint)
+    let mut flags_iter = flags.split(|flag| flag == &"--");
+    let pre_hook_flags = flags_iter.next().unwrap_or(&[]);
+    let post_hook_flags = flags_iter.next().unwrap_or(&[]);
+    call_request(host, endpoint, pre_hook_flags, post_hook_flags)
 }
 
-fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
+fn call_request(
+    host: url::Url,
+    endpoint: &EndPoint,
+    pre_hook_flags: &[&str],
+    post_hook_flags: &[&str],
+) -> anyhow::Result<()> {
     let Ok(ep_path) = subst::substitute(&endpoint.path, &subst::Env) else {
         error!("Failed to substitute {}", &endpoint.path);
         panic!("endpoint path substition failed");
@@ -271,15 +259,14 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
     } else {
         (req, None)
     };
-    let flags = endpoint
-        .flags
-        .iter()
-        .map(|flag| flag.as_str())
-        .collect::<Vec<_>>();
-    let f = flags.as_slice();
     // if prehook is present then execute pre hook else set the content type and return content
     let (req, body) = if let Some(pre_hook) = endpoint.pre_hook.as_ref() {
-        exec_prehook(req, body.as_ref().map(|b_vec| b_vec.as_slice()), pre_hook, f)
+        exec_prehook(
+            req,
+            body.as_deref(),
+            pre_hook,
+            pre_hook_flags,
+        )
     } else {
         (req, body)
     };
@@ -293,7 +280,7 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
 
     if let Some(post_hook) = &endpoint.post_hook {
         let obj = PostHookObject::from(response);
-        let final_obj = exec_posthook(&obj, post_hook, &[]);
+        let final_obj = exec_posthook(&obj, post_hook, post_hook_flags);
         info!("response headers: {:#?}", final_obj.headers);
         info!(
             "response status: {:#?}, status_text: {:#?}",

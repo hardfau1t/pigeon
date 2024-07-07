@@ -1,5 +1,5 @@
 use clap::Parser;
-use pigeon::{parse_and_find_service, Document};
+use pigeon::{parse_and_exec_service, Document};
 use tracing::{debug, error, info};
 use tracing_subscriber::filter::LevelFilter;
 
@@ -75,12 +75,10 @@ fn main() -> Result<(), anyhow::Error> {
             }
         } else {
             // list services since service name is not present
-            Some(
-                document
-                    .services
-                    .iter()
-                    .for_each(|svc| println!("name: {}, alias: {:?}", svc.name, svc.alias)),
-            );
+            document
+                .services
+                .iter()
+                .for_each(|svc| println!("name: {}, alias: {:?}", svc.name, svc.alias));
             Ok(())
         }
     } else {
@@ -92,6 +90,7 @@ fn main() -> Result<(), anyhow::Error> {
             error!("service is required field, unless listing");
             return Err(anyhow::anyhow!("missing param"));
         };
-        parse_and_find_service(&document, &service_name, &endpoint_name)
+        let flags = args.args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
+        parse_and_exec_service(&document, &service_name, &endpoint_name, flags.as_slice())
     }
 }
