@@ -80,8 +80,8 @@ pub struct EndPoint {
     #[serde(default)]
     params: Vec<(String, String)>,
     body: Option<Body>,
-    pre_hook: Option<Vec<Hook>>,
-    post_hook: Option<Vec<Hook>>,
+    pre_hook: Option<Hook>,
+    post_hook: Option<Hook>,
     #[serde(default)]
     flags: Vec<String>,
     path: String,
@@ -156,7 +156,7 @@ where
 }
 
 /// parses document and run given query
-pub fn execute(
+pub fn parse_and_find_service(
     document: &Document,
     service_name: &str,
     endpoint_name: &str,
@@ -278,10 +278,8 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
     let f = flags.as_slice();
     // if prehook is present then execute pre hook else set the content type and return content
-    let (req, body) = if let Some(hooks) = endpoint.pre_hook.as_ref() {
-        hooks.iter().fold((req, body), |(req, body), hook| {
-            exec_prehook(req, body.as_ref().map(|b_vec| b_vec.as_slice()), hook, f)
-        })
+    let (req, body) = if let Some(pre_hook) = endpoint.pre_hook.as_ref() {
+        exec_prehook(req, body.as_ref().map(|b_vec| b_vec.as_slice()), pre_hook, f)
     } else {
         (req, body)
     };
@@ -295,11 +293,12 @@ fn call_request(host: url::Url, endpoint: &EndPoint) -> anyhow::Result<()> {
 
     if let Some(post_hook) = &endpoint.post_hook {
         let obj = PostHookObject::from(response);
-        let final_obj = post_hook
-            .iter()
-            .fold(obj, |last_obj, hook| exec_posthook(&last_obj, hook, &[]));
+        let final_obj = exec_posthook(&obj, post_hook, &[]);
         info!("response headers: {:#?}", final_obj.headers);
-        info!("response status: {:#?}, status_text: {:#?}", final_obj.status, final_obj.status_text);
+        info!(
+            "response status: {:#?}, status_text: {:#?}",
+            final_obj.status, final_obj.status_text
+        );
         if let Some(data) = final_obj.body.as_ref() {
             std::io::stdout().write_all(data)?;
         }
@@ -415,7 +414,9 @@ fn exec_prehook(
         headers,
         params,
         body,
-        host: parsed_url.host_str().expect("Valid url was expected at this point"),
+        host: parsed_url
+            .host_str()
+            .expect("Valid url was expected at this point"),
         path: parsed_url.path(),
         scheme: parsed_url.scheme(),
     };

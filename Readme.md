@@ -53,18 +53,17 @@ params = [
     ["key-2", "value-2"],
     ["key-2", "value-3"]
 ]
+# hook or script which are executed on request data
+pre_hook.closure = "<inline>" # NOT YET SUPPORTED inline script, commands are directly written in string, conflicts with script
+pre_hook.script = "<path>" # path to script file
+# hook or script which are executed on response data
+post_hook.closure = "<inline>" # NOT YET SUPPORTED inline script, commands are directly written in string, conflicts with script
+post_hook.script = "<path>" # path to script file
 [service.endpoint.body]
 kind = "<content-type>" # this signifies body content-type request headers will be set with given Content-Type
 data = "<inline-data>" # body is directly represented in raw string, This conflicts with `path`
 path = "<data-file>" # file path containing body, This conflicts with `data`
 # list of hooks or scripts which are executed before running query, which can be used to modify headers, body etc
-[[service.endpoint.pre_hook]]
-closure = "<inline>" # NOT YET SUPPORTED inline script, commands are directly written in string, conflicts with script
-script = "<path>" # path to script file
-# list of hooks or scripts which are executed on response data
-[[service.endpoint.post_hook]]
-closure = "<inline>" # NOT YET SUPPORTED inline script, commands are directly written in string, conflicts with script
-script = "<path>" # path to script file
 ```
 
 ### Path substitutions
@@ -81,10 +80,9 @@ Hooks takes msgpack serialized data and runs set of operations and writes serial
 Why msgpack? unlike json or any other formats it can serialize binary data and responses can contain binary data.
 As for other formats like json serialized data support might be added later but its not yet supported.
 
-Here are couple of points you need to know about hooks
+Check [example pre-hook](./example-prehook.nu) or [example post-hook](./example-posthook.nu) scripts
 
-- any number of hooks can be specified and all of them are executed sequentially and output of one is given to next hook. But output should be in msgpack format
-- for debugging you can write to stderr, which will be printed with log level debug(`-vv`)
+Note: for debugging you can write to stderr, which will be printed with log level debug(`-vv`)
 
 Note: whatever is written to stdout is considered as output and gets deserialized
 

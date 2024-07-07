@@ -1,5 +1,5 @@
 use clap::Parser;
-use pigeon::{execute, Document};
+use pigeon::{parse_and_find_service, Document};
 use tracing::{debug, error, info};
 use tracing_subscriber::filter::LevelFilter;
 
@@ -92,6 +92,6 @@ fn main() -> Result<(), anyhow::Error> {
             error!("service is required field, unless listing");
             return Err(anyhow::anyhow!("missing param"));
         };
-        execute(&document, &service_name, &endpoint_name)
+        parse_and_find_service(&document, &service_name, &endpoint_name)
     }
 }

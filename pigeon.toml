@@ -24,8 +24,7 @@ alias = "get"
 method = "get"
 path = "/get"
 headers = [["x-abc", "d, ef"], ["x-abc", "huh"]]
-[[service.endpoint.pre_hook]]
-script  = "./example-prehook.nu"
+pre_hook.script  = "./example-prehook.nu"
 
 [[service.endpoint]]
 name = "method-post"
@@ -34,11 +33,10 @@ method = "post"
 path = "/post"
 headers = [["key", "value"]]
 params = [["a", "b"], ["c", "d"]]
+pre_hook.script = "./example-prehook.nu"
 [service.endpoint.body]
 kind = "application/json"
 data = '{"a": "b", "c": [1,2,3]}'
-[[service.endpoint.pre_hook]]
-script = "./example-prehook.nu"
 
 
 [[service.endpoint]]
@@ -46,5 +44,4 @@ name = "dyn data bytes get"
 alias = "bytes"
 method = "get"
 path = "/bytes/${bytes}"
-# [[service.endpoint.post_hook]]
-# script = "./example-posthook.nu"
+post_hook.script = "./example-posthook.nu"
