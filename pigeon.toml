@@ -1,4 +1,6 @@
 version = "0.2.0"
+# project name
+project = "pigeon"
 #---------------- env ----------------#
 [[environment]]
 name = "staging"

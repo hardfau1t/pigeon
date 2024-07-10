@@ -1,14 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap, io::Write, str::FromStr};
 use tracing::{debug, error, info, trace, warn};
+use crate::constants;
 
-pub mod constants;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
     #[allow(dead_code)]
     version: String,
+    /// To distinguish different versions of identifiers
+    project: String,
     #[serde(rename = "environment")]
     environments: Vec<Environment>,
     #[serde(rename = "service")]
