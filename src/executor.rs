@@ -1,8 +1,7 @@
+use crate::constants;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap, io::Write, str::FromStr};
 use tracing::{debug, error, info, trace, warn};
-use crate::constants;
-
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -263,12 +262,7 @@ fn call_request(
     };
     // if prehook is present then execute pre hook else set the content type and return content
     let (req, body) = if let Some(pre_hook) = endpoint.pre_hook.as_ref() {
-        exec_prehook(
-            req,
-            body.as_deref(),
-            pre_hook,
-            pre_hook_flags,
-        )
+        exec_prehook(req, body.as_deref(), pre_hook, pre_hook_flags)
     } else {
         (req, body)
     };
@@ -278,7 +272,17 @@ fn call_request(
     } else {
         info!( request= ?req, "sending request");
         req.call()
-    }?;
+    }
+    .unwrap_or_else(|err| match err {
+        ureq::Error::Status(code, response) => {
+            warn!("Request Failed with code: {code}");
+            response
+        }
+        ureq::Error::Transport(e) => {
+            error!("Transport error occurred during processing of request: {e}");
+            panic!("Transmission error");
+        }
+    });
 
     if let Some(post_hook) = &endpoint.post_hook {
         let obj = PostHookObject::from(response);
