@@ -219,7 +219,7 @@ fn call_request(
 ) -> anyhow::Result<()> {
     let Ok(ep_path) = subst::substitute(&endpoint.path, &subst::Env) else {
         error!("Failed to substitute {}", &endpoint.path);
-        panic!("endpoint path substition failed");
+        std::process::exit(1);
     };
     let uri = host.join(&ep_path)?;
     let req = ureq::request(&endpoint.method.to_string(), uri.as_str());
@@ -285,7 +285,7 @@ fn call_request(
         }
         ureq::Error::Transport(e) => {
             error!("Transport error occurred during processing of request: {e}");
-            panic!("Transmission error");
+            std::process::exit(1)
         }
     });
 
@@ -422,7 +422,7 @@ fn exec_prehook(
     // size will always be larger than obj, but atleast optimize is for single allocation
     let body_buf = rmp_serde::encode::to_vec_named(&obj).unwrap_or_else(|e| {
         error!("Failed to serialize pre-hook obj: {e}");
-        panic!("Failed to call pre-hook")
+        std::process::exit(1)
     });
 
     match hook {
@@ -437,7 +437,7 @@ fn exec_prehook(
                 .spawn()
                 .unwrap_or_else(|e| {
                     error!("Failed to spawn {path:?} : {e}");
-                    panic!("Failed call pre-hook")
+                    std::process::exit(1)
                 });
             debug!("writing to child: {body_buf:?}");
             child
@@ -447,11 +447,11 @@ fn exec_prehook(
                 .write_all(&body_buf)
                 .unwrap_or_else(|e| {
                     error!("Failed to write body data: {e}");
-                    panic!("Couldn't pass body to pre-hook")
+                    std::process::exit(1)
                 });
             let output = child.wait_with_output().unwrap_or_else(|e| {
                 error!("Failed to read pre-hook stdout: {e}");
-                panic!("Couldn't read pre-hook output")
+                std::process::exit(1)
             });
             debug!(output=?output.stdout, "pre-hook output");
             info!(
@@ -461,7 +461,7 @@ fn exec_prehook(
             let mut pre_hook_obj: PreHookObjectResponse =
                 rmp_serde::from_slice(output.stdout.as_ref()).unwrap_or_else(|e| {
                     error!("Failed to deserialize pre-hook output: {e}");
-                    panic!("Unexpected pre-hook output")
+                    std::process::exit(1)
                 });
             let body = pre_hook_obj.body.take();
             let req = ureq::request(req.method(), req.url());
@@ -487,7 +487,7 @@ fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookO
     // size will always be larger than obj, but atleast optimize is for single allocation
     let body_buf = rmp_serde::encode::to_vec_named(&obj).unwrap_or_else(|e| {
         error!("Failed to serialize pre-hook obj: {e}");
-        panic!("Failed to call pre-hook")
+        std::process::exit(1)
     });
 
     match hook {
@@ -502,7 +502,7 @@ fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookO
                 .spawn()
                 .unwrap_or_else(|e| {
                     error!("Failed to spawn {path:?} : {e}");
-                    panic!("Failed call pre-hook")
+                    std::process::exit(1)
                 });
             debug!("writing to child: {body_buf:?}");
             child
@@ -512,11 +512,11 @@ fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookO
                 .write_all(&body_buf)
                 .unwrap_or_else(|e| {
                     error!("Failed to write body data: {e}");
-                    panic!("Couldn't pass body to pre-hook")
+                    std::process::exit(1)
                 });
             let output = child.wait_with_output().unwrap_or_else(|e| {
                 error!("Failed to read pre-hook stdout: {e}");
-                panic!("Couldn't read pre-hook output")
+                std::process::exit(1)
             });
             debug!(output=?output.stdout, "post-hook output");
             info!(
@@ -526,7 +526,7 @@ fn exec_posthook(obj: &PostHookObject, hook: &Hook, flags: &[&str]) -> PostHookO
             let post_hook_resp =
                 rmp_serde::from_slice(output.stdout.as_ref()).unwrap_or_else(|e| {
                     error!("Failed to deserialize pre-hook output: {e}");
-                    panic!("Unexpected pre-hook output")
+                    std::process::exit(1)
                 });
             post_hook_resp
         }
