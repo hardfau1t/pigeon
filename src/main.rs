@@ -67,9 +67,13 @@ fn main() -> Result<(), anyhow::Error> {
                         Err(anyhow::anyhow!("Failed to list services"))
                     }
                 } else {
-                    svc.endpoint
-                        .iter()
-                        .for_each(|ep| println!("name={}, alias={:?}", ep.name, ep.alias));
+                    svc.endpoint.iter().for_each(|ep| {
+                        println!(
+                            "--> name: {}, alias: {}",
+                            ep.name,
+                            ep.alias.as_deref().unwrap_or("null")
+                        )
+                    });
                     Ok(())
                 }
             } else {
@@ -81,7 +85,7 @@ fn main() -> Result<(), anyhow::Error> {
             document
                 .services
                 .iter()
-                .for_each(|svc| println!("name: {}, alias: {:?}", svc.name, svc.alias));
+                .for_each(|svc| println!("-> name: {}, alias: {}", svc.name, svc.alias.as_deref().unwrap_or("null")));
             Ok(())
         }
     } else {
