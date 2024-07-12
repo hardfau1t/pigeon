@@ -70,6 +70,13 @@ impl Store {
         })
     }
 
+    /// open the store and overwrite values with environment variables and insert new
+    pub fn with_env(package: &impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
+        let mut store = Self::open(package)?;
+        store.config.extend(std::env::vars());
+        Ok(store)
+    }
+
     /// make changes permanent
     /// by default all changes are permanent and store in cache
     /// set as false to make it temporary
