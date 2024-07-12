@@ -267,7 +267,12 @@ fn call_request(
         (req, body)
     };
     let response = if let Some(ref body) = body {
-        info!( request= ?req, body= ?body, "sending request with body");
+        let body_str_res = std::str::from_utf8(body);
+        if let Ok(body_str) = body_str_res{
+            info!( request= ?req, body= body_str, "sending request with body");
+        } else{
+            info!( request= ?req, body= ?body, "sending request with body");
+        }
         req.send_bytes(body.as_slice())
     } else {
         info!( request= ?req, "sending request");
