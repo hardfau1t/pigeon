@@ -1,0 +1,142 @@
+//! used to store environment variables for pigeon
+//! Why not use shell environment variables, because it is hard to use environment variables when you are a independent binary
+
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+};
+
+use tracing::{debug, error, warn};
+
+/// Main interface for managing variables
+#[derive(Debug, Clone)]
+pub struct Store {
+    config: HashMap<String, String>,
+    persistent: bool,
+    package: std::path::PathBuf,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("XdgCache path is missing from the system")]
+    XdgCacheMissing,
+    #[error("content of config file is invalid")]
+    CorruptedPackage,
+    #[error("store path is not directory, or failed to create directory")]
+    InvalidPath,
+}
+
+impl Store {
+    /// open keystore for given package/project
+    pub fn open(package: &impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
+        let mut config_path =
+            dirs::cache_dir().expect("cache_dir is missing in dirs module, file an issue");
+        config_path.push(env!("CARGO_PKG_NAME"));
+
+        // check if the store directory present if not create new
+        if config_path.exists() {
+            if !config_path.is_dir() {
+                error!("{config_path:?} is not directory, try to remove it and try again");
+                return Err(StoreError::InvalidPath);
+            }
+        } else {
+            if let Err(e) = std::fs::create_dir(&config_path) {
+                error!("Failed to create config store directory: {e}");
+                return Err(StoreError::InvalidPath);
+            }
+        };
+
+        config_path.push(package);
+        debug!("config store path: {config_path:?}");
+        let pairs = match std::fs::read_to_string(&config_path) {
+            Ok(content) => toml::from_str::<HashMap<String, String>>(&content).map_err(|e| {
+                error!(
+                    "Deserialization of cached config failed: {e}, remove the file and try again"
+                );
+                StoreError::CorruptedPackage
+            })?,
+            Err(e) => {
+                warn!(
+                    "Couldn't read config store for {:?}: {e}, creating new",
+                    package.as_ref()
+                );
+                HashMap::new()
+            }
+        };
+        Ok(Self {
+            config: pairs,
+            persistent: true,
+            package: config_path,
+        })
+    }
+
+    /// make changes permanent
+    /// by default all changes are permanent and store in cache
+    /// set as false to make it temporary
+    pub fn persistent(&mut self, is_persistent: bool) {
+        self.persistent = is_persistent;
+    }
+}
+
+impl Deref for Store {
+    type Target = HashMap<String, String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.config
+    }
+}
+
+impl DerefMut for Store {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.config
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        let Ok(serialized_config) = toml::to_string(&self.config) else {
+            warn!("Failed to serialize the config store, not writing to disk");
+            return;
+        };
+        if let Err(e) = std::fs::write(&self.package, serialized_config) {
+            warn!(
+                "Session store write to disk failed for {:?}: {e}",
+                &self.package
+            )
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tracing_test::traced_test;
+
+    use super::*;
+
+    #[traced_test]
+    #[test]
+    fn store_and_get() {
+        let mut store = Store::open(&"test_package").unwrap();
+        store.persistent(false);
+        let key = "key1".to_string();
+        let value = "value1".to_string();
+
+        store.insert(key.clone(), value.clone());
+        assert_eq!(store.get(&key), Some(&value));
+    }
+
+    #[traced_test]
+    #[test]
+    fn store_and_get_persistent() {
+        let key = "key1".to_string();
+        let value = "value1".to_string();
+        {
+            let mut store = Store::open(&"test_package").unwrap();
+            store.insert(key.clone(), value.clone());
+        }
+
+        let mut new_store = Store::open(&"test_package").unwrap();
+        new_store.persistent(false);
+        assert_eq!(new_store.get(&key), Some(&value));
+    }
+}

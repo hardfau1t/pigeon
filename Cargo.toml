@@ -19,3 +19,6 @@ tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 ureq = { version = "2.9.7", features = ["json"] }
 url = "2.5.2"
+
+[dev-dependencies]
+tracing-test = "0.2.5"

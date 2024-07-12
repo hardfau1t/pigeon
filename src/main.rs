@@ -1,5 +1,6 @@
-mod executor;
 mod constants;
+mod executor;
+mod store;
 
 use clap::Parser;
 use executor::{parse_and_exec_service, Document};
