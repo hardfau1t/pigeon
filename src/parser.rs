@@ -1,7 +1,7 @@
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::{collections::HashMap, rc::Rc};
 use tracing::{debug, error, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -234,16 +234,102 @@ impl ServiceModule {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ModuleSetError {}
+
+#[derive(Debug)]
+struct Module {
+    environments: Vec<std::rc::Rc<Environment>>,
+    endpoints: Vec<EndPoint>,
+    submodules: HashMap<String, Self>,
+}
+
+#[derive(Debug)]
+struct ModuleSet(HashMap<String, Module>);
+
+impl TryFrom<HashMap<String, ServiceModule>> for ModuleSet {
+    type Error = ModuleSetError;
+
+    fn try_from(value: HashMap<String, ServiceModule>) -> Result<Self, Self::Error> {
+        let inner = value
+            .into_iter()
+            .map(|(name, service_mod)| {
+                let module = {
+                    let ServiceModule {
+                        environments,
+                        endpoints,
+                        submodules,
+                    } = service_mod;
+                    let environments = environments
+                        .into_iter()
+                        .map(|environ| Rc::new(environ))
+                        .collect();
+
+                    let submodules = submodules
+                        .into_iter()
+                        .map(|(name, sub_mod)| {
+                            let SubModule {
+                                environments,
+                                endpoints,
+                                submodules,
+                            } = sub_mod;
+                            let module = Module {
+                                environments,
+                                endpoints,
+                                submodules,
+                            };
+                            (name, module)
+                        })
+                        .collect();
+
+                    Module {
+                        environments,
+                        endpoints,
+                        submodules,
+                    }
+                };
+                (name, module)
+            })
+            .collect::<HashMap<String, Module>>();
+        Ok(Self(inner))
+    }
+}
+
 /// Used incase of environments in submodules
 /// these will be used to override environment configurations defined in service-module
 #[derive(Debug, Deserialize)]
 struct EnvironmentBuilder {
-    name: Option<String>,
+    name: String,
     scheme: Option<String>,
     host: Option<String>,
     port: Option<u16>,
     #[serde(default)]
     store: HashMap<String, String>,
+}
+
+impl EnvironmentBuilder {
+    fn build(self, template: &Environment) -> Option<Environment> {
+        if self.name != template.name {
+            return None;
+        }
+        let Self {
+            name,
+            scheme,
+            host,
+            port,
+            store: builder_key_store,
+        } = self;
+
+        let mut key_store = template.store.clone();
+        key_store.extend(builder_key_store.into_iter());
+        Some(Environment {
+            name,
+            scheme: scheme.unwrap_or(template.scheme.clone()),
+            host: host.unwrap_or(template.host.clone()),
+            port: port.or(template.port),
+            store: key_store,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -270,5 +356,10 @@ impl SubModule {
             .ok_or(PopulateError::UnexpectedFile(path.into()))?
             .to_string();
         Ok((module_name, toml::from_str::<Self>(&content)?))
+    }
+
+    /// promotes itself to service module, by referencing all of its environments
+    fn promote(&self, parent_environments: &[Environment]) -> Result<ServiceModule, ()> {
+        todo!()
     }
 }
