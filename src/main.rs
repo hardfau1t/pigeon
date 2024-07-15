@@ -21,7 +21,7 @@ struct Arguments {
     #[arg(short, long)]
     list: bool,
     #[arg(required_unless_present("list"))]
-    endpoint: Option<Vec<String>>,
+    endpoint: Vec<String>,
     /// arguments for hooks, note to make it unamgious add -- before providing any flags
     /// add another -- separator to separate between prehook flags and post hook flags
     #[arg(allow_hyphen_values(true), last(true))]
@@ -33,7 +33,19 @@ impl Arguments {
         &self,
         services: &std::collections::HashMap<String, parser::ServiceModule>,
     ) -> Result<(), anyhow::Error> {
-        todo!()
+        if self.list {
+            let mut endpoint_iter = self.endpoint.iter();
+            let Some(service_name) = endpoint_iter.next() else {
+                eprintln!("Available services: {:?}", services.keys());
+                return Ok(());
+            };
+            let Some(service) = services.get(service_name) else {
+                return Err(anyhow::anyhow!("No such service {service_name}"));
+            };
+            todo!()
+        } else {
+            todo!()
+        }
     }
 }
 
@@ -63,5 +75,6 @@ fn main() -> Result<(), anyhow::Error> {
     let config = parser::Config::open(&args.config_file)?;
     debug!(config=?config, "configuration");
     let services = config.populate()?;
+    debug!(services=?services, "parsed services");
     args.run(&services)
 }

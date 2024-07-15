@@ -3,7 +3,7 @@ name = "dev"
 scheme = "http"
 host = "httbin.org"
 
-[[environment.store]]
+[environment.store]
 key_1 = "value_1"
 
 # -------------------------------------------------------
@@ -13,7 +13,7 @@ name = "prod"
 scheme = "https"
 host = "httbin.org"
 
-[[environment.store]]
+[environment.store]
 key_1 = "value_2"
 
 # =======================================================

@@ -16,8 +16,12 @@ pub enum ConfigError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PopulateError {
-    #[error("Failed to read content of service directory")]
-    InvalidServiceDirectory(#[from] std::io::Error),
+    #[error("Failed to read content of service directory or file : {0:?}")]
+    InvalidServiceDirectoryOrFile(#[from] std::io::Error),
+    #[error("Unexpected file, expecting only toml files: {0:?}")]
+    UnexpectedFile(PathBuf),
+    #[error("Failed to parse file: {0:?}")]
+    ParseError(#[from] toml::de::Error),
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,10 +66,6 @@ impl Config {
             .read_dir()?
             .filter_map(|file| match file {
                 Ok(dir_entry) => {
-                    let Some(module_name) = dir_entry.file_name().to_str().map(|name| name.to_string()) else {
-                        warn!("service name is not valid utf-8, please change it utf-8 string");
-                        return None
-                    };
                     let ft = match dir_entry.file_type() {
                         Ok(ft) => ft,
                         Err(e) => {
@@ -76,14 +76,18 @@ impl Config {
                     let res = if ft.is_file() {
                         ServiceModule::from_file(&dir_entry.path())
                     } else if ft.is_dir() {
-                        ServiceModule::from_dir(&dir_entry.path())
+                        let Some(module_name) = dir_entry.file_name().to_str().map(|name| name.to_string()) else {
+                            warn!("service name is not valid utf-8, please change it utf-8 string");
+                            return None
+                        };
+                        ServiceModule::from_dir(&dir_entry.path()).map(|sm| (module_name, sm))
                     } else {
-                        warn!(file=?module_name, "direntry is neither file or directory, its not handled yet skipping");
+                        warn!(file=?dir_entry.path(), "direntry is neither file or directory, its not handled yet skipping");
                         return None;
 
                     };
                     match res {
-                            Ok(sm) => Some((module_name, sm)),
+                            Ok(sm) => Some(sm),
                             Err(e) => {
                                 warn!(file=?dir_entry.path(), "Failed to parse config file: {e:?}");
                                 None
@@ -114,7 +118,7 @@ pub struct EndPoint {
     pub alias: Option<String>,
     method: Method,
     #[serde(default)]
-    headers: Vec<(String, String)>,
+    headers: HashMap<String, Vec<String>>,
     #[serde(default)]
     params: Vec<(String, String)>,
     body: Option<Body>,
@@ -184,6 +188,7 @@ enum Hook {
 
 #[derive(Debug, Deserialize)]
 pub struct ServiceModule {
+    #[serde(rename = "environment")]
     environments: Vec<Environment>,
     #[serde(default)]
     endpoints: Vec<EndPoint>,
@@ -192,16 +197,40 @@ pub struct ServiceModule {
 }
 
 impl ServiceModule {
-    fn from_file(path_ref: &impl AsRef<Path>) -> Result<Self, ()> {
+    fn from_file(path_ref: &impl AsRef<Path>) -> Result<(String, Self), PopulateError> {
         let path = path_ref.as_ref();
         if let None = path.extension().filter(|ext| *ext == "toml") {
-            warn!(file_path= ?path, "Non toml file ignoring");
-            todo!()
+            return Err(PopulateError::UnexpectedFile(path.into()));
         }
-        todo!()
+        let content = std::fs::read_to_string(path)?;
+        let module_name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or(PopulateError::UnexpectedFile(path.into()))?
+            .to_string();
+        Ok((module_name, toml::from_str::<Self>(&content)?))
     }
-    fn from_dir(path: &impl AsRef<Path>) -> Result<Self, ()> {
-        todo!()
+    fn from_dir(path_ref: &impl AsRef<Path>) -> Result<Self, PopulateError> {
+        let mut path_buf: PathBuf = path_ref.as_ref().into();
+        let submodules = path_buf.read_dir()?.filter_map(|dir_entry_res| {
+            let dir_entry = dir_entry_res.ok()?;
+            if dir_entry.file_name() == "index.toml" {
+                // index.toml will be handled separately
+                return None;
+            }
+            match SubModule::from_file(&dir_entry.path()) {
+                Ok(sm) => Some(sm),
+                Err(e) => {
+                    warn!(error=?e, "Failed to get submodule, skipping");
+                    None
+                }
+            }
+        });
+        path_buf.push("index.toml");
+        let module_content = std::fs::read_to_string(&path_buf)?;
+        let mut module = toml::from_str::<Self>(&module_content)?;
+        module.submodules.extend(submodules);
+        Ok(module)
     }
 }
 
@@ -220,8 +249,26 @@ struct EnvironmentBuilder {
 #[derive(Debug, Deserialize)]
 struct SubModule {
     #[serde(default)]
+    #[serde(rename = "environment")]
     environments: Vec<EnvironmentBuilder>,
+    #[serde(rename = "endpoint")]
     endpoints: Vec<EndPoint>,
     #[serde(default)]
     submodules: Vec<Self>,
+}
+
+impl SubModule {
+    fn from_file(path_ref: &impl AsRef<Path>) -> Result<(String, Self), PopulateError> {
+        let path = path_ref.as_ref();
+        if let None = path.extension().filter(|ext| *ext == "toml") {
+            return Err(PopulateError::UnexpectedFile(path.into()));
+        }
+        let content = std::fs::read_to_string(path)?;
+        let module_name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or(PopulateError::UnexpectedFile(path.into()))?
+            .to_string();
+        Ok((module_name, toml::from_str::<Self>(&content)?))
+    }
 }
