@@ -1,0 +1,33 @@
+[[environment]]
+name = "dev"
+scheme = "http"
+host = "httbin.org"
+
+[[environment.store]]
+key_1 = "value_1"
+
+# -------------------------------------------------------
+
+[[environment]]
+name = "prod"
+scheme = "https"
+host = "httbin.org"
+
+[[environment.store]]
+key_1 = "value_2"
+
+# =======================================================
+
+[[Endpoint]]
+name = "get"
+path = "/get"
+method = "post"
+headers = {x-abc= ["d", "e"], header-key = "header-value"}
+pre_hook.script = "./exampe-prehook.nu"
+
+[[Endpoint]]
+name = "post"
+path = "/post"
+method = "post"
+service.body = {kind = "application/json", data = '{"a": "b", "c": [1,2,3]}'}
+

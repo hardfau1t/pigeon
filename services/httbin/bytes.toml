@@ -1,0 +1,9 @@
+[[environment]]
+name = "dev"
+store = {key_1 = "value_3", bytes=100}
+
+[[Endpoint]]
+name = "get"
+path = "/bytes/${bytes}"
+method = "get"
+headers = {x-abc= ["d", "e"], header-key = "header-value"}
