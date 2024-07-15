@@ -28,6 +28,15 @@ struct Arguments {
     args: Vec<String>,
 }
 
+impl Arguments {
+    fn run(
+        &self,
+        services: &std::collections::HashMap<String, parser::ServiceModule>,
+    ) -> Result<(), anyhow::Error> {
+        todo!()
+    }
+}
+
 fn main() -> Result<(), anyhow::Error> {
     let args = Arguments::parse();
     let log_level = match args.verbose {
@@ -52,5 +61,7 @@ fn main() -> Result<(), anyhow::Error> {
     debug!(extra_args=?args.args, "Arguments for the scripts");
 
     let config = parser::Config::open(&args.config_file)?;
-    Ok(())
+    debug!(config=?config, "configuration");
+    let services = config.populate()?;
+    args.run(&services)
 }
