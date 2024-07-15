@@ -244,6 +244,43 @@ struct Module {
     submodules: HashMap<String, Self>,
 }
 
+impl Module {
+    fn from_submodule(submodule: SubModule, parent_env_list: &[Rc<Environment>]) -> Self {
+        let SubModule {
+            environments: sub_mod_environs,
+            endpoints,
+            submodules,
+        } = submodule;
+        let environments = sub_mod_environs
+            .into_iter()
+            .filter_map(|environ| {
+                let parent_env = parent_env_list.iter().find_map(|env| {
+                    if env.name == environ.name {
+                        Some(env.as_ref())
+                    } else {
+                        None
+                    }
+                });
+                match environ.build(parent_env) {
+                    Some(e) => Some(Rc::new(e)),
+                    None => {
+                        warn!(
+                            environ = environ.name,
+                            "Failed to construct environ, skipping"
+                        );
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        Self {
+            environments,
+            endpoints,
+            submodules: todo!(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ModuleSet(HashMap<String, Module>);
 
@@ -308,10 +345,7 @@ struct EnvironmentBuilder {
 }
 
 impl EnvironmentBuilder {
-    fn build(self, template: &Environment) -> Option<Environment> {
-        if self.name != template.name {
-            return None;
-        }
+    fn build(self, template_opt: Option<&Environment>) -> Option<Environment> {
         let Self {
             name,
             scheme,
@@ -319,6 +353,18 @@ impl EnvironmentBuilder {
             port,
             store: builder_key_store,
         } = self;
+        let Some(template) = template_opt else {
+            return Some(Environment {
+                name,
+                scheme: scheme?,
+                host: host?,
+                port,
+                store: builder_key_store,
+            });
+        };
+        if name != template.name {
+            return None;
+        }
 
         let mut key_store = template.store.clone();
         key_store.extend(builder_key_store.into_iter());
