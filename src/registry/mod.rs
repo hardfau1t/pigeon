@@ -125,6 +125,7 @@ impl Module {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Environment {
     name: String,
     scheme: String,
@@ -134,6 +135,7 @@ pub struct Environment {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EndPoint {
     name: String,
     pub alias: Option<String>,

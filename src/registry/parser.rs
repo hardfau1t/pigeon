@@ -2,7 +2,7 @@ use semver::Version;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, rc::Rc};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 use super::{EndPoint, Environment, Module};
 
@@ -76,8 +76,14 @@ impl Config {
                         }
                     };
                     let res = if ft.is_file() {
+
+                        trace!(file=?dir_entry.path(), "parsing as file");
                         ServiceModule::from_file(&dir_entry.path())
+
                     } else if ft.is_dir() {
+
+                        trace!(file=?dir_entry.path(), "parsing as directory");
+
                         let Some(module_name) = dir_entry.file_name().to_str().map(|name| name.to_string()) else {
                             warn!("service name is not valid utf-8, please change it utf-8 string");
                             return None
@@ -106,10 +112,12 @@ impl Config {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServiceModule {
     #[serde(rename = "environment")]
     pub environments: Vec<Environment>,
     #[serde(default)]
+    #[serde(rename="endpoint")]
     pub endpoints: Vec<EndPoint>,
     #[serde(default)]
     pub submodules: HashMap<String, SubModule>,
@@ -156,6 +164,7 @@ impl ServiceModule {
 /// Used incase of environments in submodules
 /// these will be used to override environment configurations defined in service-module
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EnvironmentBuilder {
     name: String,
     scheme: Option<String>,
@@ -200,6 +209,7 @@ impl EnvironmentBuilder {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SubModule {
     #[serde(default)]
     #[serde(rename = "environment")]
