@@ -33,7 +33,7 @@ struct Arguments {
 impl Arguments {
     fn run(&self, services: &Bundle) -> Result<(), anyhow::Error> {
         if self.list {
-            services.view(self.endpoint.iter().map(|s| s.as_str()));
+            services.view(&self.endpoint);
             Ok(())
         } else {
             todo!()

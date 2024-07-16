@@ -1,5 +1,6 @@
 use serde::Deserialize;
-use std::{collections::HashMap, path::Path, rc::Rc};
+use std::{borrow::Borrow, collections::HashMap, path::Path, rc::Rc};
+use tracing::{debug, error};
 
 mod parser;
 use parser::ServiceModule;
@@ -8,19 +9,61 @@ use parser::ServiceModule;
 pub struct Bundle(HashMap<String, Module>);
 
 impl Bundle {
-    pub fn keys(&self) -> std::collections::hash_map::Keys<'_, std::string::String, Module> {
-        self.0.keys()
-    }
-
     pub fn open(file_path: &impl AsRef<Path>) -> Result<Self, anyhow::Error> {
         let config = parser::Config::open(file_path)?;
         Ok(config.populate()?.into())
     }
 
-    pub fn view<'a, I>(&self, keys: I)
-        where I: IntoIterator<Item = &'a str>
-    {
+    pub fn view<T: Borrow<str>>(&self, keys: &[T]) {
+        let mut iterator = keys.iter();
+        let Some(service_name) = iterator.next() else {
+            eprintln!("Available services: {:#?}", self.0.keys());
+            return;
+        };
+        let Some(root_service) = self.0.get(service_name.borrow()) else {
+            error!(
+                service = service_name.borrow(),
+                "Couldn't find given service"
+            );
+            return;
+        };
+        let Ok((endpoint, last_service)) = iterator.try_fold(
+            (None, Some(root_service)),
+            |(_endpoints, sub_services), key| {
+                if let Some(sub_service) = sub_services {
+                    Ok(sub_service.get(&key.borrow()))
+                } else {
+                    debug!(key = key.borrow(), "Failed to find");
+                    Err(())
+                }
+            },
+        ) else {
+            error!("Couldn't find given service or endpoint");
+            return;
+        };
 
+        eprintln!("Below are endpoints and services under {}", keys.join("."));
+        if let Some(endpoint) = endpoint {
+            println!("Endpoint: {:#?}", endpoint)
+        }
+        if let Some(service) = last_service {
+            eprintln!(
+                "api's under this module: {:?}",
+                service
+                    .endpoints
+                    .iter()
+                    .map(|ep| (&ep.name, &ep.alias))
+                    .collect::<Vec<_>>()
+            );
+            eprintln!(
+                "environments under this module: {:#?}",
+                service.environments
+            );
+            eprintln!(
+                "sub modules under this module: {:#?}",
+                service.submodules.keys()
+            );
+        }
     }
 }
 
@@ -66,6 +109,19 @@ struct Module {
     environments: Vec<std::rc::Rc<Environment>>,
     endpoints: Vec<EndPoint>,
     submodules: HashMap<String, Self>,
+}
+
+impl Module {
+    fn get(&self, key: &impl AsRef<str>) -> (Option<&EndPoint>, Option<&Self>) {
+        let key = key.as_ref();
+        let ep = self
+            .endpoints
+            .iter()
+            .find(|ep| ep.name == key || ep.alias.as_ref().is_some_and(|alias| alias == key));
+        let subm = self.submodules.get(key);
+
+        (ep, subm)
+    }
 }
 
 #[derive(Debug, Deserialize)]

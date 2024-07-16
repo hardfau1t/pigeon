@@ -200,7 +200,7 @@ impl EnvironmentBuilder {
 }
 
 #[derive(Debug, Deserialize)]
-struct SubModule {
+pub struct SubModule {
     #[serde(default)]
     #[serde(rename = "environment")]
     environments: Vec<EnvironmentBuilder>,
