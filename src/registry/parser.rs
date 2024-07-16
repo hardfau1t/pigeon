@@ -1,8 +1,10 @@
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, rc::Rc};
 use tracing::{debug, error, warn};
+
+use super::{EndPoint, Environment, Module};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -104,96 +106,13 @@ impl Config {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Environment {
-    name: String,
-    scheme: String,
-    host: String,
-    port: Option<u16>,
-    store: HashMap<String, String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct EndPoint {
-    name: String,
-    pub alias: Option<String>,
-    method: Method,
-    #[serde(default)]
-    headers: HashMap<String, Vec<String>>,
-    #[serde(default)]
-    params: Vec<(String, String)>,
-    body: Option<Body>,
-    pre_hook: Option<Hook>,
-    post_hook: Option<Hook>,
-    path: String,
-}
-
-/// Http Methods
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(rename_all = "snake_case")]
-pub enum Method {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Head,
-    Options,
-    Connect,
-    Patch,
-    Trace,
-}
-
-impl std::fmt::Display for Method {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str_repr = match self {
-            Method::Get => "GET",
-            Method::Post => "POST",
-            Method::Put => "PUT",
-            Method::Delete => "DELETE",
-            Method::Head => "HEAD",
-            Method::Options => "OPTIONS",
-            Method::Connect => "CONNECT",
-            Method::Patch => "PATCH",
-            Method::Trace => "TRACE",
-        };
-        f.write_str(str_repr)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Body {
-    kind: String,
-    #[serde(flatten)]
-    data: BodyData,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-enum BodyData {
-    #[serde(rename = "data")]
-    Inline(String),
-    #[serde(rename = "file")]
-    Path(std::path::PathBuf),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(rename_all = "snake_case")]
-enum Hook {
-    Closure(()),
-    #[serde(rename = "script")]
-    Path(std::path::PathBuf),
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ServiceModule {
     #[serde(rename = "environment")]
-    environments: Vec<Environment>,
+    pub environments: Vec<Environment>,
     #[serde(default)]
-    endpoints: Vec<EndPoint>,
+    pub endpoints: Vec<EndPoint>,
     #[serde(default)]
-    submodules: HashMap<String, SubModule>,
+    pub submodules: HashMap<String, SubModule>,
 }
 
 impl ServiceModule {
@@ -231,104 +150,6 @@ impl ServiceModule {
         let mut module = toml::from_str::<Self>(&module_content)?;
         module.submodules.extend(submodules);
         Ok(module)
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ModuleSetError {}
-
-#[derive(Debug)]
-struct Module {
-    environments: Vec<std::rc::Rc<Environment>>,
-    endpoints: Vec<EndPoint>,
-    submodules: HashMap<String, Self>,
-}
-
-impl Module {
-    fn from_submodule(submodule: SubModule, parent_env_list: &[Rc<Environment>]) -> Self {
-        let SubModule {
-            environments: sub_mod_environs,
-            endpoints,
-            submodules,
-        } = submodule;
-        let environments = sub_mod_environs
-            .into_iter()
-            .filter_map(|environ| {
-                let parent_env = parent_env_list.iter().find_map(|env| {
-                    if env.name == environ.name {
-                        Some(env.as_ref())
-                    } else {
-                        None
-                    }
-                });
-                match environ.build(parent_env) {
-                    Some(e) => Some(Rc::new(e)),
-                    None => {
-                        warn!(
-                            environ = environ.name,
-                            "Failed to construct environ, skipping"
-                        );
-                        None
-                    }
-                }
-            })
-            .collect::<Vec<_>>();
-        Self {
-            environments,
-            endpoints,
-            submodules: todo!(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct ModuleSet(HashMap<String, Module>);
-
-impl TryFrom<HashMap<String, ServiceModule>> for ModuleSet {
-    type Error = ModuleSetError;
-
-    fn try_from(value: HashMap<String, ServiceModule>) -> Result<Self, Self::Error> {
-        let inner = value
-            .into_iter()
-            .map(|(name, service_mod)| {
-                let module = {
-                    let ServiceModule {
-                        environments,
-                        endpoints,
-                        submodules,
-                    } = service_mod;
-                    let environments = environments
-                        .into_iter()
-                        .map(|environ| Rc::new(environ))
-                        .collect();
-
-                    let submodules = submodules
-                        .into_iter()
-                        .map(|(name, sub_mod)| {
-                            let SubModule {
-                                environments,
-                                endpoints,
-                                submodules,
-                            } = sub_mod;
-                            let module = Module {
-                                environments,
-                                endpoints,
-                                submodules,
-                            };
-                            (name, module)
-                        })
-                        .collect();
-
-                    Module {
-                        environments,
-                        endpoints,
-                        submodules,
-                    }
-                };
-                (name, module)
-            })
-            .collect::<HashMap<String, Module>>();
-        Ok(Self(inner))
     }
 }
 
@@ -386,7 +207,7 @@ struct SubModule {
     #[serde(rename = "endpoint")]
     endpoints: Vec<EndPoint>,
     #[serde(default)]
-    submodules: Vec<Self>,
+    submodules: HashMap<String, Self>,
 }
 
 impl SubModule {
@@ -403,9 +224,39 @@ impl SubModule {
             .to_string();
         Ok((module_name, toml::from_str::<Self>(&content)?))
     }
-
-    /// promotes itself to service module, by referencing all of its environments
-    fn promote(&self, parent_environments: &[Environment]) -> Result<ServiceModule, ()> {
-        todo!()
+    pub fn into_module(self, parent_env_list: &[Rc<Environment>]) -> Module {
+        let SubModule {
+            environments: sub_mod_environs,
+            endpoints,
+            submodules,
+        } = self;
+        let environments = sub_mod_environs
+            .into_iter()
+            .filter_map(|environ| {
+                let parent_env = parent_env_list.iter().find_map(|env| {
+                    if env.name == environ.name {
+                        Some(env.as_ref())
+                    } else {
+                        None
+                    }
+                });
+                match environ.build(parent_env) {
+                    Some(e) => Some(Rc::new(e)),
+                    None => {
+                        warn!("Failed to construct environ, skipping");
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        let submodules = submodules
+            .into_iter()
+            .map(|(name, sub_mod)| (name, sub_mod.into_module(&environments)))
+            .collect::<HashMap<String, Module>>();
+        Module {
+            environments,
+            endpoints,
+            submodules,
+        }
     }
 }

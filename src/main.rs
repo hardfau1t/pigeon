@@ -1,12 +1,14 @@
 mod constants;
 mod executor;
-mod parser;
+mod registry;
 mod store;
 
 use clap::Parser;
 use executor::{parse_and_exec_service, Document};
 use tracing::{debug, error, info};
 use tracing_subscriber::filter::LevelFilter;
+
+use registry::Bundle;
 
 #[derive(Debug, clap::Parser)]
 #[command(author, version, about)]
@@ -29,20 +31,10 @@ struct Arguments {
 }
 
 impl Arguments {
-    fn run(
-        &self,
-        services: &std::collections::HashMap<String, parser::ServiceModule>,
-    ) -> Result<(), anyhow::Error> {
+    fn run(&self, services: &Bundle) -> Result<(), anyhow::Error> {
         if self.list {
-            let mut endpoint_iter = self.endpoint.iter();
-            let Some(service_name) = endpoint_iter.next() else {
-                eprintln!("Available services: {:?}", services.keys());
-                return Ok(());
-            };
-            let Some(service) = services.get(service_name) else {
-                return Err(anyhow::anyhow!("No such service {service_name}"));
-            };
-            todo!()
+            services.view(self.endpoint.iter().map(|s| s.as_str()));
+            Ok(())
         } else {
             todo!()
         }
@@ -72,9 +64,8 @@ fn main() -> Result<(), anyhow::Error> {
     debug!("Log level set to : {log_level:?}");
     debug!(extra_args=?args.args, "Arguments for the scripts");
 
-    let config = parser::Config::open(&args.config_file)?;
-    debug!(config=?config, "configuration");
-    let services = config.populate()?;
+    let services = Bundle::open(&args.config_file)?;
     debug!(services=?services, "parsed services");
+
     args.run(&services)
 }
