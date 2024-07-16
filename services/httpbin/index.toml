@@ -5,6 +5,7 @@ host = "httbin.org"
 
 [environment.store]
 key_1 = "value_1"
+key_2 = "value_4"
 
 # -------------------------------------------------------
 

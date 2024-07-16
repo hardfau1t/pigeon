@@ -117,7 +117,7 @@ pub struct ServiceModule {
     #[serde(rename = "environment")]
     pub environments: Vec<Environment>,
     #[serde(default)]
-    #[serde(rename="endpoint")]
+    #[serde(rename = "endpoint")]
     pub endpoints: Vec<EndPoint>,
     #[serde(default)]
     pub submodules: HashMap<String, SubModule>,
@@ -234,13 +234,16 @@ impl SubModule {
             .to_string();
         Ok((module_name, toml::from_str::<Self>(&content)?))
     }
+
+    #[tracing::instrument]
     pub fn into_module(self, parent_env_list: &[Rc<Environment>]) -> Module {
+        trace!("converting submodule to module");
         let SubModule {
             environments: sub_mod_environs,
             endpoints,
             submodules,
         } = self;
-        let environments = sub_mod_environs
+        let mut environments = sub_mod_environs
             .into_iter()
             .filter_map(|environ| {
                 let parent_env = parent_env_list.iter().find_map(|env| {
@@ -259,6 +262,11 @@ impl SubModule {
                 }
             })
             .collect::<Vec<_>>();
+        parent_env_list.iter().for_each(|penv| {
+            if let None = environments.iter().find(|env| env.name == penv.name) {
+                environments.push(penv.clone())
+            }
+        });
         let submodules = submodules
             .into_iter()
             .map(|(name, sub_mod)| (name, sub_mod.into_module(&environments)))
