@@ -1,7 +1,7 @@
 [[environment]]
 name = "dev"
 scheme = "http"
-host = "httbin.org"
+host = "httpbin.org"
 
 [environment.store]
 key_1 = "value_1"
@@ -12,7 +12,7 @@ key_2 = "value_4"
 [[environment]]
 name = "prod"
 scheme = "https"
-host = "httbin.org"
+host = "httpbin.org"
 
 [environment.store]
 key_1 = "value_2"

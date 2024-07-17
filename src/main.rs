@@ -1,10 +1,8 @@
 mod constants;
-mod executor;
 mod registry;
 mod store;
 
 use clap::Parser;
-use executor::{parse_and_exec_service, Document};
 use tracing::{debug, error, info};
 use tracing_subscriber::filter::LevelFilter;
 
@@ -34,10 +32,10 @@ impl Arguments {
     fn run(&self, services: &Bundle) -> Result<(), anyhow::Error> {
         if self.list {
             services.view(&self.endpoint);
-            Ok(())
         } else {
-            todo!()
+            services.run(&self.endpoint)?;
         }
+        Ok(())
     }
 }
 

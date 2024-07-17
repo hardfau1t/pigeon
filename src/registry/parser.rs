@@ -1,10 +1,13 @@
 use semver::Version;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::{collections::HashMap, rc::Rc};
 use tracing::{debug, error, trace, warn};
 
-use super::{EndPoint, Environment, Module};
+use super::{Environment, Module};
+
+type EndPoint = super::EndPoint<super::NotSubstituted>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -31,7 +34,7 @@ pub enum PopulateError {
 pub struct Config {
     version: Version,
     /// To distinguish different versions of identifiers
-    project: String,
+    pub project: String,
     /// where to find for api's
     api_directory: PathBuf,
 }
@@ -167,11 +170,22 @@ impl ServiceModule {
 #[serde(deny_unknown_fields)]
 struct EnvironmentBuilder {
     name: String,
-    scheme: Option<String>,
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_scheme")]
+    scheme: Option<http::uri::Scheme>,
     host: Option<String>,
     port: Option<u16>,
     #[serde(default)]
     store: HashMap<String, String>,
+}
+/// deserialization function for uri scheme
+fn deserialize_scheme<'de, D>(deserializer: D) -> Result<Option<http::uri::Scheme>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let str_val = String::deserialize(deserializer)?;
+    Some(http::uri::Scheme::from_str(&str_val)
+        .map_err(|e| serde::de::Error::custom(format!("Failed to parse uri: {e:?}")))).transpose()
 }
 
 impl EnvironmentBuilder {
