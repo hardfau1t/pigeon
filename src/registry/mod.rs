@@ -309,11 +309,20 @@ impl EndPoint<Substituted> {
             body,
             path,
             method,
+            // HACK: I couldn't figure out how to send reference of hashmap to sereialize and take hashmap from deserialize
+            config: config_store.deref().deref().clone(),
         };
+
         let mapped_request_obj = pre_hook
             .map(|hook| hook.run(&request_object, request_hook_flags))
             .transpose()?
+            .map(|mut obj| {
+                // pre hook was present so update the config store
+                config_store.extend(obj.config.drain());
+                obj
+            })
             .unwrap_or(request_object);
+
         let request = mapped_request_obj.into_request(base_url)?;
 
         // generate request object
@@ -334,10 +343,15 @@ impl EndPoint<Substituted> {
                 }
             },
         };
-        let post_hook_obj: ResponseHookObject = response.into();
+        let post_hook_obj: ResponseHookObject =
+            ResponseHookObject::from_response(response, config_store.deref().deref().clone());
         let hook_response = post_hook
             .map(|hook| hook.run(&post_hook_obj, response_hook_flags))
             .transpose()?
+            .map(|mut obj| {
+                config_store.extend(obj.config.drain());
+                obj
+            })
             .unwrap_or(post_hook_obj);
         if let Some(body) = hook_response.body {
             std::io::stdout().write_all(&body)?
@@ -355,6 +369,8 @@ struct RequestHookObject {
     body: Option<Vec<u8>>,
     path: String,
     method: Method,
+    #[serde(default)]
+    config: HashMap<String, String>,
 }
 
 impl RequestHookObject {
@@ -387,10 +403,12 @@ struct ResponseHookObject {
     body: Option<Vec<u8>>,
     status: u16,
     status_text: String,
+    #[serde(default)]
+    config: HashMap<String, String>,
 }
 
-impl From<ureq::Response> for ResponseHookObject {
-    fn from(response: ureq::Response) -> Self {
+impl ResponseHookObject {
+    fn from_response(response: ureq::Response, config: HashMap<String, String>) -> Self {
         let mut body = Vec::new();
         let header_keys = response.headers_names();
         let status = response.status();
@@ -415,6 +433,7 @@ impl From<ureq::Response> for ResponseHookObject {
             body: Some(body),
             status,
             status_text,
+            config,
         }
     }
 }

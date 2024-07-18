@@ -14,6 +14,7 @@ pub struct Store {
     config: HashMap<String, String>,
     persistent: bool,
     package: std::path::PathBuf,
+    used_with_env: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -67,6 +68,7 @@ impl Store {
             config: pairs,
             persistent: true,
             package: config_path,
+            used_with_env: false,
         })
     }
 
@@ -74,6 +76,7 @@ impl Store {
     pub fn with_env(package: &impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
         let mut store = Self::open(package)?;
         store.config.extend(std::env::vars());
+        store.used_with_env = true;
         Ok(store)
     }
 
@@ -101,6 +104,13 @@ impl DerefMut for Store {
 
 impl Drop for Store {
     fn drop(&mut self) {
+        if self.used_with_env {
+            std::env::vars().for_each(|(key, env_val)| {
+                if self.config.get(&key).is_some_and(|val| val == &env_val) {
+                    self.config.remove(&key);
+                }
+            })
+        }
         let Ok(serialized_config) = toml::to_string(&self.config) else {
             warn!("Failed to serialize the config store, not writing to disk");
             return;
