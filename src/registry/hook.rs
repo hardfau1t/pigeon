@@ -29,14 +29,14 @@ impl Hook {
                     .stderr(std::process::Stdio::piped())
                     .args(args.iter().map(|arg| arg.borrow()))
                     .spawn()?;
-                debug!("writing to child: {body_buf:?}");
+                debug!("writing to child: {body_buf:x?}");
                 child
                     .stdin
                     .take()
                     .expect("Childs stdin is not open, eventhough body is present")
                     .write_all(&body_buf)?;
                 let output = child.wait_with_output()?;
-                debug!(output=?output.stdout, "pre-hook output");
+                debug!("pre-hook output: {:x?}", output.stdout);
                 info!(
                     "pre-hook stderr: {}",
                     String::from_utf8_lossy(&output.stderr)

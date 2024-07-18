@@ -3,7 +3,7 @@ mod registry;
 mod store;
 
 use clap::Parser;
-use tracing::{debug, error, info};
+use tracing::debug;
 use tracing_subscriber::filter::LevelFilter;
 
 use registry::Bundle;

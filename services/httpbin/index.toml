@@ -22,9 +22,9 @@ key_1 = "value_2"
 [[endpoint]]
 name = "get"
 path = "/get"
-method = "post"
+method = "get"
 headers = {x-abc= ["d", "e"], header-key = ["header-value"]}
-pre_hook.script = "./exampe-prehook.nu"
+pre_hook.script = "./example-prehook.nu"
 
 [[endpoint]]
 name = "post"
