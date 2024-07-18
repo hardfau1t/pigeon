@@ -38,7 +38,7 @@ impl Hook {
                 let output = child.wait_with_output()?;
                 debug!("pre-hook output: {:x?}", output.stdout);
                 info!(
-                    "pre-hook stderr: {}",
+                    "pre-hook stderr: `{}`",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 let pre_hook_obj: T = rmp_serde::from_slice(output.stdout.as_ref()).unwrap();
