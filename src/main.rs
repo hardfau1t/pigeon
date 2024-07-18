@@ -33,7 +33,7 @@ impl Arguments {
         if self.list {
             services.view(&self.endpoint);
         } else {
-            services.run(&self.endpoint)?;
+            services.run(&self.endpoint, &self.args)?;
         }
         Ok(())
     }

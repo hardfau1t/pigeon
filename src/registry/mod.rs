@@ -86,7 +86,7 @@ impl Bundle {
             );
         }
     }
-    pub fn run<T: Borrow<str>>(&self, keys: &[T]) -> Result<(), anyhow::Error> {
+    pub fn run<T: Borrow<str>>(&self, keys: &[T], flags: &[impl Borrow<str>]) -> Result<(), anyhow::Error> {
         let (Some((endpoint, environments)), _) = self.find(keys) else {
             error!("couldn't find endpoint with {}", keys.join("."));
             return Ok(());
@@ -114,7 +114,7 @@ impl Bundle {
             entry.or_insert(value.clone());
         });
         let built_endpoint = endpoint.substitute(&config_store)?;
-        built_endpoint.execute(current_env.as_ref().try_into()?, &mut config_store)
+        built_endpoint.execute(current_env.as_ref().try_into()?, &mut config_store, flags)
     }
 
     fn build(package: &impl Borrow<str>, service_mods: HashMap<String, ServiceModule>) -> Self {
@@ -279,9 +279,10 @@ impl EndPoint<NotSubstituted> {
 }
 
 impl EndPoint<Substituted> {
-    fn execute(self, base_url: url::Url, config_store: &mut Store) -> anyhow::Result<()> {
-        let request_hook_flags = Option::<&str>::None.as_slice();
-        let response_hook_flags = Option::<&str>::None.as_slice();
+    fn execute(self, base_url: url::Url, config_store: &mut Store, flags:&[impl Borrow<str>]) -> anyhow::Result<()> {
+        let mut flags_iter = flags.split(|flag| &flag.borrow() == &"--");
+        let request_hook_flags = flags_iter.next().unwrap_or(&[]);
+        let response_hook_flags = flags_iter.next().unwrap_or(&[]);
         let Self {
             method,
             mut headers,
