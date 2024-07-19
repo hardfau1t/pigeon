@@ -148,10 +148,37 @@ impl ServiceModule {
                 // index.toml will be handled separately
                 return None;
             }
-            match SubModule::from_file(&dir_entry.path()) {
-                Ok(sm) => Some(sm),
+            match dir_entry.file_type() {
+                Ok(ft) => {
+                    if ft.is_dir() {
+                        match SubModule::from_dir(&dir_entry.path()) {
+                            Ok(sm) => {
+                                let Some(mod_name) = dir_entry.file_name().to_str().map(|s| s.to_string()) else {
+                                    warn!(mod_name=?dir_entry.file_name(), "Failed to convert module name to utf-8 String, currently only utf-8 strings are supported");
+                                    return None
+                                };
+                                Some((mod_name, sm))
+                            }
+                            Err(e) => {
+                                warn!(file=?dir_entry.path(), error=?e , "Failed to get submodule from dir, skipping");
+                                None
+                            }
+                        }
+                    } else if ft.is_file() {
+                        match SubModule::from_file(&dir_entry.path()) {
+                            Ok(sm) => Some(sm),
+                            Err(e) => {
+                                warn!(file=?dir_entry.path(), error=?e, "Failed to get submodule, skipping");
+                                None
+                            }
+                        }
+                    } else {
+                        warn!(file=?dir_entry.file_name(), "Currently {ft:?} is not supported");
+                        None
+                    }
+                }
                 Err(e) => {
-                    warn!(error=?e, "Failed to get submodule, skipping");
+                    warn!(file=?dir_entry.file_name(),"Failed to get file type for {:?}", e);
                     None
                 }
             }
@@ -184,8 +211,11 @@ where
     D: serde::Deserializer<'de>,
 {
     let str_val = String::deserialize(deserializer)?;
-    Some(http::uri::Scheme::from_str(&str_val)
-        .map_err(|e| serde::de::Error::custom(format!("Failed to parse uri: {e:?}")))).transpose()
+    Some(
+        http::uri::Scheme::from_str(&str_val)
+            .map_err(|e| serde::de::Error::custom(format!("Failed to parse uri: {e:?}"))),
+    )
+    .transpose()
 }
 
 impl EnvironmentBuilder {
@@ -228,6 +258,7 @@ pub struct SubModule {
     #[serde(default)]
     #[serde(rename = "environment")]
     environments: Vec<EnvironmentBuilder>,
+    #[serde(default)]
     #[serde(rename = "endpoint")]
     endpoints: Vec<EndPoint>,
     #[serde(default)]
@@ -235,6 +266,55 @@ pub struct SubModule {
 }
 
 impl SubModule {
+    fn from_dir(path_ref: &impl AsRef<Path>) -> Result<Self, PopulateError> {
+        let mut path_buf: PathBuf = path_ref.as_ref().into();
+        let submodules = path_buf.read_dir()?.filter_map(|dir_entry_res| {
+            let dir_entry = dir_entry_res.ok()?;
+            if dir_entry.file_name() == "index.toml" {
+                // index.toml will be handled separately
+                return None;
+            }
+            match dir_entry.file_type() {
+                Ok(ft) => {
+                    if ft.is_dir() {
+                        match SubModule::from_dir(&dir_entry.path()) {
+                            Ok(sm) => {
+                                let Some(mod_name) = dir_entry.file_name().to_str().map(|s| s.to_string()) else {
+                                    warn!(mod_name=?dir_entry.file_name(), "Failed to convert module name to utf-8 String, currently only utf-8 strings are supported");
+                                    return None
+                                };
+                                Some((mod_name, sm))
+                            },
+                            Err(e) => {
+                                warn!(file=?dir_entry.path(), error=?e, "Failed to get submodule from directory, skipping");
+                                None
+                            }
+                        }
+                    } else if ft.is_file() {
+                        match SubModule::from_file(&dir_entry.path()) {
+                            Ok(sm) => Some(sm),
+                            Err(e) => {
+                                warn!(file=?dir_entry.path(), error=?e, "Failed to get submodule, skipping");
+                                None
+                            }
+                        }
+                    } else {
+                        warn!(file=?dir_entry.file_name(), "Currently {ft:?} is not supported");
+                        None
+                    }
+                }
+                Err(e) => {
+                    warn!(file=?dir_entry.file_name(), "Failed to get file type for {:?}", e);
+                    None
+                }
+            }
+        });
+        path_buf.push("index.toml");
+        let module_content = std::fs::read_to_string(&path_buf)?;
+        let mut module = toml::from_str::<Self>(&module_content)?;
+        module.submodules.extend(submodules);
+        Ok(module)
+    }
     fn from_file(path_ref: &impl AsRef<Path>) -> Result<(String, Self), PopulateError> {
         let path = path_ref.as_ref();
         if let None = path.extension().filter(|ext| *ext == "toml") {

@@ -86,7 +86,11 @@ impl Bundle {
             );
         }
     }
-    pub fn run<T: Borrow<str>>(&self, keys: &[T], flags: &[impl Borrow<str>]) -> Result<(), anyhow::Error> {
+    pub fn run<T: Borrow<str>>(
+        &self,
+        keys: &[T],
+        flags: &[impl Borrow<str>],
+    ) -> Result<(), anyhow::Error> {
         let (Some((endpoint, environments)), _) = self.find(keys) else {
             error!("couldn't find endpoint with {}", keys.join("."));
             return Ok(());
@@ -191,6 +195,7 @@ pub struct Environment {
     scheme: http::uri::Scheme,
     host: String,
     port: Option<u16>,
+    #[serde(default)]
     store: HashMap<String, String>,
 }
 
@@ -279,7 +284,12 @@ impl EndPoint<NotSubstituted> {
 }
 
 impl EndPoint<Substituted> {
-    fn execute(self, base_url: url::Url, config_store: &mut Store, flags:&[impl Borrow<str>]) -> anyhow::Result<()> {
+    fn execute(
+        self,
+        base_url: url::Url,
+        config_store: &mut Store,
+        flags: &[impl Borrow<str>],
+    ) -> anyhow::Result<()> {
         let mut flags_iter = flags.split(|flag| &flag.borrow() == &"--");
         let request_hook_flags = flags_iter.next().unwrap_or(&[]);
         let response_hook_flags = flags_iter.next().unwrap_or(&[]);
