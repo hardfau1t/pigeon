@@ -100,17 +100,25 @@ impl Bundle {
             );
         }
     }
+
     #[instrument(skip(flags))]
+    /// run query pointed by keys
+    ///
+    /// * `keys`: path which points to given query
+    /// * `flags`: flags for hooks `--` will separate flags into pre-hook and post-hook flags
+    /// * `persistent_config`: whether to store changes to config back
     pub fn run<T: Borrow<str> + std::fmt::Debug>(
         &self,
         keys: &[T],
         flags: &[impl Borrow<str>],
+        persistent_config: bool,
     ) -> Result<(), color_eyre::Report> {
         let (Some((endpoint, environments)), _) = self.find(keys) else {
             error!("couldn't find endpoint with {}", keys.join("."));
             return Ok(());
         };
         let mut config_store = Store::with_env(&self.package)?;
+        config_store.persistent(persistent_config);
         let Some(current_env_name) = config_store.get(constants::KEY_CURRENT_ENVIRONMENT) else {
             bail!("missing {}", constants::KEY_CURRENT_ENVIRONMENT)
         };

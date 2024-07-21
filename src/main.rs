@@ -17,6 +17,9 @@ struct Arguments {
     /// configuration file containing queries
     #[arg(short, long, default_value = "./pigeon.toml")]
     config_file: std::path::PathBuf,
+    /// don't store changes to config store back to disk
+    #[arg(short('p'), long("no-persistent"))]
+    no_persistent: bool,
     /// list available options (services/endpoints)
     #[arg(short, long)]
     list: bool,
@@ -58,7 +61,7 @@ fn main() -> color_eyre::Result<()> {
     if args.list {
         services.view(&args.endpoint);
     } else {
-        services.run(&args.endpoint, &args.args)?;
+        services.run(&args.endpoint, &args.args, !args.no_persistent)?;
     }
     Ok(())
 }
