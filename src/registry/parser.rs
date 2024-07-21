@@ -329,9 +329,9 @@ impl SubModule {
         Ok((module_name, toml::from_str::<Self>(&content)?))
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self, parent_env_list))]
     pub fn into_module(self, parent_env_list: &[Rc<Environment>]) -> Module {
-        trace!("converting submodule to module");
+        debug!("converting submodule: {self:?} to module with env {parent_env_list:?}");
         let SubModule {
             environments: sub_mod_environs,
             endpoints,
