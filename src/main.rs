@@ -28,18 +28,8 @@ struct Arguments {
     args: Vec<String>,
 }
 
-impl Arguments {
-    fn run(&self, services: &Bundle) -> Result<(), anyhow::Error> {
-        if self.list {
-            services.view(&self.endpoint);
-        } else {
-            services.run(&self.endpoint, &self.args)?;
-        }
-        Ok(())
-    }
-}
-
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
     let args = Arguments::parse();
     let log_level = match args.verbose {
         0 => LevelFilter::WARN,
@@ -65,5 +55,10 @@ fn main() -> Result<(), anyhow::Error> {
     let services = Bundle::open(&args.config_file)?;
     debug!(services=?services, "parsed services");
 
-    args.run(&services)
+    if args.list {
+        services.view(&args.endpoint);
+    } else {
+        services.run(&args.endpoint, &args.args)?;
+    }
+    Ok(())
 }

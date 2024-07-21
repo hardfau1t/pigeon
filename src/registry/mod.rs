@@ -1,10 +1,10 @@
-use anyhow::bail;
+use color_eyre::eyre::bail;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow, collections::HashMap, io::Write, marker::PhantomData, ops::Deref, path::Path,
     rc::Rc, str::FromStr,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, instrument, warn};
 
 mod hook;
 mod parser;
@@ -19,7 +19,8 @@ pub struct Bundle {
 }
 
 impl Bundle {
-    pub fn open(file_path: &impl AsRef<Path>) -> Result<Self, anyhow::Error> {
+    #[instrument(skip(file_path))]
+    pub fn open(file_path: &impl AsRef<Path>) -> Result<Self, color_eyre::Report> {
         let config = parser::Config::open(file_path)?;
         let service_mods = config.populate()?;
         Ok(Self::build(&config.project, service_mods))
@@ -61,36 +62,50 @@ impl Bundle {
         (endpoint, last_service)
     }
 
+    #[instrument(skip(keys))]
     pub fn view<T: Borrow<str>>(&self, keys: &[T]) {
         let (endpoint, last_service) = self.find(keys);
-        eprintln!("Below are endpoints and services under {}", keys.join("."));
-        if let Some(endpoint) = endpoint {
-            println!("Endpoint: {:#?}", endpoint)
+        if let Some((endpoint, environ)) = endpoint {
+            eprintln!("{}", endpoint);
+            eprintln!("Environments:");
+            environ
+                .iter()
+                .for_each(|env| eprintln!("\t{}", env.as_ref()));
         }
         if let Some(service) = last_service {
+            let endpoints = service
+                .endpoints
+                .iter()
+                .map(|ep| {
+                    format!(
+                        "{}{}",
+                        &ep.name,
+                        ep.alias
+                            .as_ref()
+                            .map(|alias| format!(" ({})", alias))
+                            .unwrap_or("".to_string())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("api's under this module: {}", endpoints);
+            eprintln!("environments under this module: ");
+            service
+                .environments
+                .iter()
+                .for_each(|env| println!("\t{}", env.as_ref()));
             eprintln!(
-                "api's under this module: {:?}",
-                service
-                    .endpoints
-                    .iter()
-                    .map(|ep| (&ep.name, &ep.alias))
-                    .collect::<Vec<_>>()
-            );
-            eprintln!(
-                "environments under this module: {:#?}",
-                service.environments
-            );
-            eprintln!(
-                "sub modules under this module: {:#?}",
+                "sub modules under this module: {:?}",
                 service.submodules.keys()
             );
         }
     }
-    pub fn run<T: Borrow<str>>(
+    #[instrument(skip(flags))]
+    pub fn run<T: Borrow<str> + std::fmt::Debug>(
         &self,
         keys: &[T],
         flags: &[impl Borrow<str>],
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<(), color_eyre::Report> {
         let (Some((endpoint, environments)), _) = self.find(keys) else {
             error!("couldn't find endpoint with {}", keys.join("."));
             return Ok(());
@@ -199,6 +214,21 @@ pub struct Environment {
     store: HashMap<String, String>,
 }
 
+impl std::fmt::Display for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {}://{}{}",
+            self.name,
+            self.scheme,
+            self.host,
+            self.port
+                .map(|port| format!(":{}", port))
+                .unwrap_or("".to_string())
+        )
+    }
+}
+
 impl TryInto<url::Url> for &Environment {
     type Error = url::ParseError;
 
@@ -248,6 +278,38 @@ pub struct EndPoint<T> {
     #[serde(skip)]
     _t: PhantomData<T>,
 }
+
+impl<T> std::fmt::Display for EndPoint<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = format!(
+            "{}{}",
+            self.name,
+            self.alias
+                .as_ref()
+                .map(|alias| format!(" ({})", alias))
+                .unwrap_or("".to_string())
+        );
+        let method = &self.method;
+        let endpoint = &self.path;
+        let params = &self.params;
+        let headers = self
+            .headers
+            .iter()
+            .map(|(key, value)| format!("{key}: {value:?}\n"))
+            .collect::<String>();
+        let body = &self.body;
+        writeln!(
+            f,
+            r#"==== {name} ====
+{method} {endpoint}
+params: {params:?}
+headers:
+{headers}
+body:
+    {body:?}"#
+        )
+    }
+}
 impl EndPoint<NotSubstituted> {
     fn substitute(&self, config_store: &Store) -> Result<EndPoint<Substituted>, subst::Error> {
         let key_val_store = config_store.deref();
@@ -289,7 +351,7 @@ impl EndPoint<Substituted> {
         base_url: url::Url,
         config_store: &mut Store,
         flags: &[impl Borrow<str>],
-    ) -> anyhow::Result<()> {
+    ) -> color_eyre::Result<()> {
         let mut flags_iter = flags.split(|flag| &flag.borrow() == &"--");
         let request_hook_flags = flags_iter.next().unwrap_or(&[]);
         let response_hook_flags = flags_iter.next().unwrap_or(&[]);

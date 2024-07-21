@@ -16,7 +16,7 @@ impl Hook {
         &self,
         input: &T,
         args: &[impl Borrow<str>],
-    ) -> anyhow::Result<T> {
+    ) -> color_eyre::Result<T> {
         // size will always be larger than obj, but atleast optimize is for single allocation
         let body_buf = rmp_serde::encode::to_vec_named(&input)?;
         match self {
