@@ -1,10 +1,10 @@
-use anyhow::bail;
+use color_eyre::eyre::{bail, Context};
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Borrow, collections::HashMap, io::Write, marker::PhantomData, ops::Deref, path::Path,
-    rc::Rc, str::FromStr,
+    borrow::Borrow, collections::HashMap, marker::PhantomData, ops::Deref, path::Path, rc::Rc,
+    str::FromStr,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 mod hook;
 mod parser;
@@ -19,7 +19,8 @@ pub struct Bundle {
 }
 
 impl Bundle {
-    pub fn open(file_path: &impl AsRef<Path>) -> Result<Self, anyhow::Error> {
+    #[instrument(skip(file_path))]
+    pub fn open(file_path: &impl AsRef<Path>) -> Result<Self, color_eyre::Report> {
         let config = parser::Config::open(file_path)?;
         let service_mods = config.populate()?;
         Ok(Self::build(&config.project, service_mods))
@@ -61,43 +62,69 @@ impl Bundle {
         (endpoint, last_service)
     }
 
+    #[instrument(skip(keys))]
     pub fn view<T: Borrow<str>>(&self, keys: &[T]) {
         let (endpoint, last_service) = self.find(keys);
-        eprintln!("Below are endpoints and services under {}", keys.join("."));
-        if let Some(endpoint) = endpoint {
-            println!("Endpoint: {:#?}", endpoint)
+        if let Some((endpoint, environ)) = endpoint {
+            eprintln!("{}", endpoint);
+            eprintln!("Environments:");
+            environ
+                .iter()
+                .for_each(|env| eprintln!("\t{}", env.as_ref()));
         }
         if let Some(service) = last_service {
+            let endpoints = service
+                .endpoints
+                .iter()
+                .map(|ep| {
+                    format!(
+                        "{}{}",
+                        &ep.name,
+                        ep.alias
+                            .as_ref()
+                            .map(|alias| format!(" ({})", alias))
+                            .unwrap_or("".to_string())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("api's under this module: {}", endpoints);
+            eprintln!("environments under this module: ");
+            service
+                .environments
+                .iter()
+                .for_each(|env| println!("\t{}", env.as_ref()));
             eprintln!(
-                "api's under this module: {:?}",
-                service
-                    .endpoints
-                    .iter()
-                    .map(|ep| (&ep.name, &ep.alias))
-                    .collect::<Vec<_>>()
-            );
-            eprintln!(
-                "environments under this module: {:#?}",
-                service.environments
-            );
-            eprintln!(
-                "sub modules under this module: {:#?}",
+                "sub modules under this module: {:?}",
                 service.submodules.keys()
             );
         }
     }
-    pub fn run<T: Borrow<str>>(
+
+    /// run query pointed by keys
+    ///
+    /// * `keys`: path which points to given query
+    /// * `flags`: flags for hooks `--` will separate flags into pre-hook and post-hook flags
+    /// * `persistent_config`: whether to store changes to config back
+    #[instrument(skip(flags, self))]
+    pub fn run<T: Borrow<str> + std::fmt::Debug>(
         &self,
         keys: &[T],
         flags: &[impl Borrow<str>],
-    ) -> Result<(), anyhow::Error> {
+        persistent_config: bool,
+    ) -> Result<Option<Vec<u8>>, color_eyre::Report> {
+        trace!("running query");
         let (Some((endpoint, environments)), _) = self.find(keys) else {
-            error!("couldn't find endpoint with {}", keys.join("."));
-            return Ok(());
+            bail!("couldn't find endpoint with {}", keys.join("."));
         };
         let mut config_store = Store::with_env(&self.package)?;
+        debug!("current config: {config_store:?}");
+        config_store.persistent(persistent_config);
         let Some(current_env_name) = config_store.get(constants::KEY_CURRENT_ENVIRONMENT) else {
-            bail!("missing {}", constants::KEY_CURRENT_ENVIRONMENT)
+            bail!(
+                "missing environment, set: {}",
+                constants::KEY_CURRENT_ENVIRONMENT
+            )
         };
         let Some(current_env) = environments
             .iter()
@@ -113,11 +140,14 @@ impl Bundle {
                     .join(", ")
             )
         };
+        debug!("Current environment: {current_env:?}");
         current_env.store.iter().for_each(|(key, value)| {
             let entry = config_store.entry(key.clone());
             entry.or_insert(value.clone());
         });
-        let built_endpoint = endpoint.substitute(&config_store)?;
+        let built_endpoint = endpoint
+            .substitute(&config_store)
+            .wrap_err("Failed to substitute key values in query")?;
         built_endpoint.execute(current_env.as_ref().try_into()?, &mut config_store, flags)
     }
 
@@ -199,6 +229,21 @@ pub struct Environment {
     store: HashMap<String, String>,
 }
 
+impl std::fmt::Display for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {}://{}{}",
+            self.name,
+            self.scheme,
+            self.host,
+            self.port
+                .map(|port| format!(":{}", port))
+                .unwrap_or("".to_string())
+        )
+    }
+}
+
 impl TryInto<url::Url> for &Environment {
     type Error = url::ParseError;
 
@@ -248,8 +293,42 @@ pub struct EndPoint<T> {
     #[serde(skip)]
     _t: PhantomData<T>,
 }
+
+impl<T> std::fmt::Display for EndPoint<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = format!(
+            "{}{}",
+            self.name,
+            self.alias
+                .as_ref()
+                .map(|alias| format!(" ({})", alias))
+                .unwrap_or("".to_string())
+        );
+        let method = &self.method;
+        let endpoint = &self.path;
+        let params = &self.params;
+        let headers = self
+            .headers
+            .iter()
+            .map(|(key, value)| format!("{key}: {value:?}\n"))
+            .collect::<String>();
+        let body = &self.body;
+        writeln!(
+            f,
+            r#"==== {name} ====
+{method} {endpoint}
+params: {params:?}
+headers:
+{headers}
+body:
+    {body:?}"#
+        )
+    }
+}
 impl EndPoint<NotSubstituted> {
+    #[instrument(skip(self, config_store))]
     fn substitute(&self, config_store: &Store) -> Result<EndPoint<Substituted>, subst::Error> {
+        trace!("Constructing query by substing values from config_store");
         let key_val_store = config_store.deref();
         let url_path = subst::substitute(&self.path, key_val_store)?;
         let mut params = Vec::with_capacity(self.params.len());
@@ -289,7 +368,8 @@ impl EndPoint<Substituted> {
         base_url: url::Url,
         config_store: &mut Store,
         flags: &[impl Borrow<str>],
-    ) -> anyhow::Result<()> {
+    ) -> color_eyre::Result<Option<Vec<u8>>> {
+        trace!("executing query");
         let mut flags_iter = flags.split(|flag| &flag.borrow() == &"--");
         let request_hook_flags = flags_iter.next().unwrap_or(&[]);
         let response_hook_flags = flags_iter.next().unwrap_or(&[]);
@@ -324,6 +404,7 @@ impl EndPoint<Substituted> {
             config: config_store.deref().deref().clone(),
         };
 
+        // run pre-hook if it is available
         let mapped_request_obj = pre_hook
             .map(|hook| hook.run(&request_object, request_hook_flags))
             .transpose()?
@@ -333,11 +414,31 @@ impl EndPoint<Substituted> {
                 obj
             })
             .unwrap_or(request_object);
-
         let request = mapped_request_obj.into_request(base_url)?;
+        info!("Query {} {}", request.method(), request.url());
+        info!("headers:\n{}", {
+            let mut headers = request.header_names();
+            headers.dedup();
+            headers
+                .iter()
+                .map(|key| {
+                    let value = request.all(key).join(",");
+                    format!("> {key}: {value}")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
 
         // generate request object
         let resp = if let Some(body) = mapped_request_obj.body {
+            match std::str::from_utf8(body.as_slice()) {
+                Ok(str_body) => info!("request body: '{str_body}'"),
+                Err(e) => {
+                    warn!("Couldn't decode body as utf8 string: {e}");
+                    info!("request body: {body:x?}");
+                }
+            }
+
             request.send_bytes(body.as_slice())
         } else {
             request.call()
@@ -354,8 +455,27 @@ impl EndPoint<Substituted> {
                 }
             },
         };
+
         let post_hook_obj: ResponseHookObject =
             ResponseHookObject::from_response(response, config_store.deref().deref().clone());
+        // display response
+        info!(
+            "response status: {} {}",
+            post_hook_obj.status, post_hook_obj.status_text
+        );
+
+        info!(
+            "headers:\n{}",
+            post_hook_obj
+                .headers
+                .iter()
+                .map(|(key, values)| {
+                    let value = values.join(", ");
+                    format!("< {key}: {value}")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
         let hook_response = post_hook
             .map(|hook| hook.run(&post_hook_obj, response_hook_flags))
             .transpose()?
@@ -364,10 +484,7 @@ impl EndPoint<Substituted> {
                 obj
             })
             .unwrap_or(post_hook_obj);
-        if let Some(body) = hook_response.body {
-            std::io::stdout().write_all(&body)?
-        };
-        Ok(())
+        Ok(hook_response.body)
     }
 }
 

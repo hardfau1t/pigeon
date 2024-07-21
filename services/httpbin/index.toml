@@ -21,6 +21,7 @@ key_1 = "value_2"
 
 [[endpoint]]
 name = "get"
+alias = "g"
 path = "/get"
 method = "get"
 headers = {x-abc= ["d", "e"], header-key = ["header-value"]}

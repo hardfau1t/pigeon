@@ -1,6 +1,7 @@
+use color_eyre::eyre::Context;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{borrow::Borrow, io::Write};
-use tracing::{debug, info, trace};
+use tracing::{debug, info, instrument, trace};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -12,17 +13,20 @@ pub enum Hook {
 }
 
 impl Hook {
+    #[instrument(skip(input, args))]
     pub fn run<T: Serialize + DeserializeOwned>(
         &self,
         input: &T,
         args: &[impl Borrow<str>],
-    ) -> anyhow::Result<T> {
+    ) -> color_eyre::Result<T> {
+        trace!("running Hook");
         // size will always be larger than obj, but atleast optimize is for single allocation
-        let body_buf = rmp_serde::encode::to_vec_named(&input)?;
+        let body_buf =
+            rmp_serde::encode::to_vec_named(&input).wrap_err("serializing input body")?;
         match self {
             Hook::Closure(_cl) => unimplemented!("Currently closures are not supported"),
             Hook::Path(path) => {
-                trace!("Executing pre-hook script");
+                debug!("Executing hook: {path:?}");
                 let mut child = std::process::Command::new(path)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())

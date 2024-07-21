@@ -2,7 +2,10 @@ mod constants;
 mod registry;
 mod store;
 
+use std::io::Write;
+
 use clap::Parser;
+use color_eyre::eyre::Context;
 use tracing::debug;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -17,6 +20,13 @@ struct Arguments {
     /// configuration file containing queries
     #[arg(short, long, default_value = "./pigeon.toml")]
     config_file: std::path::PathBuf,
+    /// don't store changes to config store back to disk
+    #[arg(short('p'), long("no-persistent"))]
+    no_persistent: bool,
+
+    // write output to given file
+    #[arg(short, long)]
+    output: Option<std::path::PathBuf>,
     /// list available options (services/endpoints)
     #[arg(short, long)]
     list: bool,
@@ -28,18 +38,8 @@ struct Arguments {
     args: Vec<String>,
 }
 
-impl Arguments {
-    fn run(&self, services: &Bundle) -> Result<(), anyhow::Error> {
-        if self.list {
-            services.view(&self.endpoint);
-        } else {
-            services.run(&self.endpoint, &self.args)?;
-        }
-        Ok(())
-    }
-}
-
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
     let args = Arguments::parse();
     let log_level = match args.verbose {
         0 => LevelFilter::WARN,
@@ -65,5 +65,20 @@ fn main() -> Result<(), anyhow::Error> {
     let services = Bundle::open(&args.config_file)?;
     debug!(services=?services, "parsed services");
 
-    args.run(&services)
+    if args.list {
+        services.view(&args.endpoint);
+    } else {
+        let response_body = services.run(&args.endpoint, &args.args, !args.no_persistent)?;
+        if let Some(body) = response_body {
+            if let Some(output_file) = args.output {
+                std::fs::write(&output_file, body)
+                    .wrap_err_with(|| format!("Failed to write response body to {output_file:?}"))?
+            } else {
+                std::io::stdout()
+                    .write_all(&body)
+                    .wrap_err("Failed to write body to stdout")?
+            }
+        }
+    }
+    Ok(())
 }
