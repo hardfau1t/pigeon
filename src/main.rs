@@ -2,7 +2,10 @@ mod constants;
 mod registry;
 mod store;
 
+use std::io::Write;
+
 use clap::Parser;
+use color_eyre::eyre::Context;
 use tracing::debug;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -20,6 +23,10 @@ struct Arguments {
     /// don't store changes to config store back to disk
     #[arg(short('p'), long("no-persistent"))]
     no_persistent: bool,
+
+    // write output to given file
+    #[arg(short, long)]
+    output: Option<std::path::PathBuf>,
     /// list available options (services/endpoints)
     #[arg(short, long)]
     list: bool,
@@ -61,7 +68,17 @@ fn main() -> color_eyre::Result<()> {
     if args.list {
         services.view(&args.endpoint);
     } else {
-        services.run(&args.endpoint, &args.args, !args.no_persistent)?;
+        let response_body = services.run(&args.endpoint, &args.args, !args.no_persistent)?;
+        if let Some(body) = response_body {
+            if let Some(output_file) = args.output {
+                std::fs::write(&output_file, body)
+                    .wrap_err_with(|| format!("Failed to write response body to {output_file:?}"))?
+            } else {
+                std::io::stdout()
+                    .write_all(&body)
+                    .wrap_err("Failed to write body to stdout")?
+            }
+        }
     }
     Ok(())
 }

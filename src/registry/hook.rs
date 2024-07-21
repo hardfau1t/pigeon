@@ -21,7 +21,8 @@ impl Hook {
     ) -> color_eyre::Result<T> {
         trace!("running Hook");
         // size will always be larger than obj, but atleast optimize is for single allocation
-        let body_buf = rmp_serde::encode::to_vec_named(&input).wrap_err("serializing input body")?;
+        let body_buf =
+            rmp_serde::encode::to_vec_named(&input).wrap_err("serializing input body")?;
         match self {
             Hook::Closure(_cl) => unimplemented!("Currently closures are not supported"),
             Hook::Path(path) => {

@@ -1,8 +1,8 @@
 use color_eyre::eyre::{bail, Context};
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Borrow, collections::HashMap, io::Write, marker::PhantomData, ops::Deref, path::Path,
-    rc::Rc, str::FromStr,
+    borrow::Borrow, collections::HashMap, marker::PhantomData, ops::Deref, path::Path, rc::Rc,
+    str::FromStr,
 };
 use tracing::{debug, error, info, instrument, trace, warn};
 
@@ -112,11 +112,10 @@ impl Bundle {
         keys: &[T],
         flags: &[impl Borrow<str>],
         persistent_config: bool,
-    ) -> Result<(), color_eyre::Report> {
+    ) -> Result<Option<Vec<u8>>, color_eyre::Report> {
         trace!("running query");
         let (Some((endpoint, environments)), _) = self.find(keys) else {
-            error!("couldn't find endpoint with {}", keys.join("."));
-            return Ok(());
+            bail!("couldn't find endpoint with {}", keys.join("."));
         };
         let mut config_store = Store::with_env(&self.package)?;
         debug!("current config: {config_store:?}");
@@ -369,7 +368,7 @@ impl EndPoint<Substituted> {
         base_url: url::Url,
         config_store: &mut Store,
         flags: &[impl Borrow<str>],
-    ) -> color_eyre::Result<()> {
+    ) -> color_eyre::Result<Option<Vec<u8>>> {
         trace!("executing query");
         let mut flags_iter = flags.split(|flag| &flag.borrow() == &"--");
         let request_hook_flags = flags_iter.next().unwrap_or(&[]);
@@ -467,10 +466,15 @@ impl EndPoint<Substituted> {
 
         info!(
             "headers:\n{}",
-            post_hook_obj.headers.iter().map(|(key, values)| {
-                let value = values.join(", ");
-                format!("< {key}: {value}")
-            }).collect::<Vec<_>>().join("\n")
+            post_hook_obj
+                .headers
+                .iter()
+                .map(|(key, values)| {
+                    let value = values.join(", ");
+                    format!("< {key}: {value}")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
         );
         let hook_response = post_hook
             .map(|hook| hook.run(&post_hook_obj, response_hook_flags))
@@ -480,10 +484,7 @@ impl EndPoint<Substituted> {
                 obj
             })
             .unwrap_or(post_hook_obj);
-        if let Some(body) = hook_response.body {
-            std::io::stdout().write_all(&body)?
-        };
-        Ok(())
+        Ok(hook_response.body)
     }
 }
 
