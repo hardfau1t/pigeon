@@ -6,7 +6,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use tracing::{debug, error, warn};
+use tracing::{debug, error, instrument, trace, warn};
 
 /// Main interface for managing variables
 #[derive(Debug, Clone)]
@@ -29,20 +29,22 @@ pub enum StoreError {
 
 impl Store {
     /// open keystore for given package/project
+    #[instrument(skip(package))]
     pub fn open(package: &impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
-        let mut config_path =
-            dirs::cache_dir().expect("cache_dir is missing in dirs module, file an issue");
+        trace!("Reading config store");
+
+        let mut config_path = dirs::cache_dir().ok_or(StoreError::XdgCacheMissing)?;
         config_path.push(env!("CARGO_PKG_NAME"));
 
         // check if the store directory present if not create new
         if config_path.exists() {
             if !config_path.is_dir() {
-                error!("{config_path:?} is not directory, try to remove it and try again");
+                warn!("{config_path:?} is not directory, try to remove it and try again");
                 return Err(StoreError::InvalidPath);
             }
         } else {
             if let Err(e) = std::fs::create_dir(&config_path) {
-                error!("Failed to create config store directory: {e}");
+                debug!("Failed to create config store directory: {e}");
                 return Err(StoreError::InvalidPath);
             }
         };
@@ -52,7 +54,7 @@ impl Store {
         let pairs = match std::fs::read_to_string(&config_path) {
             Ok(content) => toml::from_str::<HashMap<String, String>>(&content).map_err(|e| {
                 error!(
-                    "Deserialization of cached config failed: {e}, remove the file and try again"
+                    "Deserialization of cached config failed: {e}Try after removing {config_path:?}"
                 );
                 StoreError::CorruptedPackage
             })?,
@@ -73,7 +75,9 @@ impl Store {
     }
 
     /// open the store and overwrite values with environment variables and insert new
+    #[instrument(skip(package))]
     pub fn with_env(package: &impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
+        trace!("Creating store with environment");
         let mut store = Self::open(package)?;
         store.config.extend(std::env::vars());
         store.used_with_env = true;
@@ -84,6 +88,14 @@ impl Store {
     /// by default all changes are permanent and store in cache
     /// set as false to make it temporary
     pub fn persistent(&mut self, is_persistent: bool) {
+        trace!(
+            "making configurations: {}",
+            if is_persistent {
+                "persistent"
+            } else {
+                "not persistent"
+            }
+        );
         self.persistent = is_persistent;
     }
 }
@@ -104,6 +116,7 @@ impl DerefMut for Store {
 
 impl Drop for Store {
     fn drop(&mut self) {
+        trace!("writing configurations back to file: {:?}", self.package);
         if self.used_with_env {
             std::env::vars().for_each(|(key, env_val)| {
                 if self.config.get(&key).is_some_and(|val| val == &env_val) {
