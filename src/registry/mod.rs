@@ -1,8 +1,8 @@
 use color_eyre::eyre::{bail, Context};
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Borrow, collections::HashMap, fmt::Write, marker::PhantomData, ops::Deref, path::Path,
-    rc::Rc, str::FromStr,
+    borrow::Borrow, collections::HashMap, marker::PhantomData, ops::Deref, path::Path, rc::Rc,
+    str::FromStr,
 };
 use tracing::{debug, error, info, instrument, trace, warn};
 
@@ -43,7 +43,6 @@ impl Bundle {
     ) {
         let mut key_iterator = keys.iter();
         let Some(service_name) = key_iterator.next() else {
-            eprintln!("Available services: {:#?}", self.services.keys());
             return (None, None);
         };
         // first key should be service and should exist
@@ -73,44 +72,21 @@ impl Bundle {
 
     #[instrument(skip(keys))]
     pub fn view<T: Borrow<str>>(&self, keys: &[T]) {
+        let Some(last_key) = keys.last().map(|l| l.borrow()) else {
+            // the list is empty so show only list of services
+            eprintln!("Available services: {:#?}", self.services.keys());
+            return;
+        };
         let (endpoint, last_service) = self.find(keys);
         if let Some((endpoint, environ)) = endpoint {
-            eprintln!(
-                "======== {} ======\n{}",
-                keys[keys.len() - 1].borrow(),
-                endpoint
-            );
+            eprintln!("======== {} ======\n{}", last_key, endpoint);
             eprintln!("Environments:");
             environ
                 .iter()
                 .for_each(|(env_name, env)| eprintln!("\t{env_name}: {}", env.as_ref()));
         }
         if let Some(service) = last_service {
-            let endpoints = service
-                .endpoints
-                .iter()
-                .map(|(ep_name, ep)| {
-                    format!(
-                        "{}{}",
-                        &ep_name,
-                        ep.alias
-                            .as_ref()
-                            .map(|alias| format!(" ({})", alias))
-                            .unwrap_or("".to_string())
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            eprintln!("api's under this module: {}", endpoints);
-            eprintln!("environments under this module: ");
-            service
-                .environments
-                .iter()
-                .for_each(|(env_name, env)| eprintln!("\t{env_name}: {}", env.as_ref()));
-            eprintln!(
-                "sub modules under this module: {:?}",
-                service.submodules.keys()
-            );
+            eprintln!("====== {last_key} ======\n{service}");
         }
     }
 
@@ -171,6 +147,8 @@ impl Bundle {
                         environments: service_mod_environments,
                         endpoints,
                         submodules,
+                        alias,
+                        description,
                     } = service_mod;
                     let environments = service_mod_environments
                         .into_iter()
@@ -189,6 +167,8 @@ impl Bundle {
                         environments,
                         endpoints,
                         submodules,
+                        alias,
+                        description,
                     }
                 };
                 (name, module)
@@ -203,6 +183,8 @@ impl Bundle {
 
 #[derive(Debug)]
 struct Module {
+    alias: Option<String>,
+    description: Option<String>,
     environments: HashMap<String, std::rc::Rc<Environment>>,
     endpoints: HashMap<String, EndPoint<NotSubstituted>>,
     submodules: HashMap<String, Self>,
@@ -221,6 +203,39 @@ impl Module {
         let subm = self.submodules.get(key);
 
         (ep, subm)
+    }
+}
+
+impl std::fmt::Display for Module {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(alias) = &self.alias {
+            writeln!(f, "alias: {alias}")?;
+        }
+        if let Some(description) = &self.description {
+            writeln!(f, "description: {description}")?;
+        }
+        writeln!(f, "environments:")?;
+        for (env_name, environ) in &self.environments {
+            writeln!(f, "\t* {env_name}: {}", environ.as_ref())?
+        }
+        if !self.endpoints.is_empty() {
+            writeln!(f, "endpoints:")?;
+            for (ep_name, ep) in &self.endpoints {
+                write!(f, "\t- {ep_name}")?;
+                if let Some(alias) = &ep.alias {
+                    writeln!(f, " ({alias})")?;
+                } else {
+                    writeln!(f)?;
+                }
+            }
+        }
+        if !self.submodules.is_empty() {
+            writeln!(f, "submodules:")?;
+            for sub_mod in self.submodules.keys() {
+                writeln!(f, "\t- {sub_mod}")?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -284,7 +299,8 @@ struct NotSubstituted;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndPoint<T> {
-    pub alias: Option<String>,
+    description: Option<String>,
+    alias: Option<String>,
     method: Method,
     #[serde(default)]
     headers: HashMap<String, Vec<String>>,
@@ -300,29 +316,27 @@ pub struct EndPoint<T> {
 
 impl<T> std::fmt::Display for EndPoint<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let alias = self.alias.as_deref().unwrap_or("");
-        let method = &self.method;
-        let endpoint = &self.path;
-        let params = &self.params;
-        let headers = self.headers.iter().fold(
-            String::new(),
-            |mut storage, (header_name, header_values)| {
-                //format!()
-                let _ = writeln!(storage, "{header_name}: {header_values:?}");
-                storage
-            },
-        );
-        let body = &self.body;
-        writeln!(
-            f,
-            r#"alias: {alias}
-{method} {endpoint}
-params: {params:?}
-headers:
-{headers}
-body:
-    {body:?}"#
-        )
+        writeln!(f, "{} {}", self.method, self.path)?;
+        if let Some(ref alias) = self.alias {
+            writeln!(f, "alias: {alias}")?
+        }
+        if !self.params.is_empty() {
+            writeln!(f, "params: {:?}", self.params)?
+        }
+        if !self.headers.is_empty() {
+            writeln!(f, "headers:")?;
+            self.headers
+                .iter()
+                .try_fold((), |_, (header_name, header_values)| {
+                    //format!()
+                    writeln!(f, "\t{header_name}: {header_values:?}")?;
+                    Ok(())
+                })?;
+        }
+        if let Some(ref body) = self.body {
+            writeln!(f, "body:\n{body:?}")?
+        }
+        Ok(())
     }
 }
 impl EndPoint<NotSubstituted> {
@@ -348,6 +362,7 @@ impl EndPoint<NotSubstituted> {
             headers.insert(key, values_subst);
         }
         Ok(EndPoint::<Substituted> {
+            description: self.description.clone(),
             alias: self.alias.clone(),
             method: self.method,
             headers,

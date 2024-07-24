@@ -117,6 +117,10 @@ impl Config {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceModule {
+    #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(rename = "environment")]
     pub environments: HashMap<String, Environment>,
     #[serde(default)]
@@ -252,6 +256,10 @@ impl EnvironmentBuilder {
 #[serde(deny_unknown_fields)]
 pub struct SubModule {
     #[serde(default)]
+    alias: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
     #[serde(rename = "environment")]
     environments: HashMap<String, EnvironmentBuilder>,
     #[serde(default)]
@@ -332,6 +340,8 @@ impl SubModule {
             environments: sub_mod_environs,
             endpoints,
             submodules,
+            alias,
+            description,
         } = self;
         // get current module private environment list inheriting parent environments
         let mut environments = sub_mod_environs
@@ -371,6 +381,8 @@ impl SubModule {
             environments,
             endpoints,
             submodules,
+            alias,
+            description,
         }
     }
 }
