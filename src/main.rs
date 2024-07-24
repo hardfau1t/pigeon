@@ -30,7 +30,12 @@ struct Arguments {
     /// list available options (services/endpoints)
     #[arg(short, long)]
     list: bool,
-    #[arg(required_unless_present("list"))]
+
+    /// output collected services as json output
+    #[arg(short, long, conflicts_with_all(["list", "endpoint"]))]
+    json: bool,
+
+    #[arg(required_unless_present_any(["list", "json"]))]
     endpoint: Vec<String>,
     /// arguments for hooks, note to make it unamgious add -- before providing any flags
     /// add another -- separator to separate between prehook flags and post hook flags
@@ -67,6 +72,9 @@ fn main() -> color_eyre::Result<()> {
 
     if args.list {
         services.view(&args.endpoint);
+    }else if args.json{
+        let stdout = std::io::stdout();
+        serde_json::to_writer(stdout, &services)?;
     } else {
         let response_body = services.run(&args.endpoint, &args.args, !args.no_persistent)?;
         if let Some(body) = response_body {

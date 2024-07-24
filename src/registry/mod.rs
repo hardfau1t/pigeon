@@ -12,7 +12,7 @@ use parser::ServiceModule;
 
 use crate::{constants, store::Store};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Bundle {
     services: HashMap<String, Module>,
     package: String,
@@ -181,7 +181,7 @@ impl Bundle {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct Module {
     alias: Option<String>,
     description: Option<String>,
@@ -239,10 +239,10 @@ impl std::fmt::Display for Module {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Environment {
-    #[serde(deserialize_with = "deserialize_scheme")]
+    #[serde(with = "serde_scheme")]
     scheme: http::uri::Scheme,
     host: String,
     port: Option<u16>,
@@ -281,14 +281,24 @@ impl TryInto<url::Url> for &Environment {
     }
 }
 
-/// deserialization function for uri scheme
-fn deserialize_scheme<'de, D>(deserializer: D) -> Result<http::uri::Scheme, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let str_val = String::deserialize(deserializer)?;
-    <http::uri::Scheme as std::str::FromStr>::from_str(&str_val)
-        .map_err(|e| serde::de::Error::custom(format!("Failed to parse uri: {e:?}")))
+mod serde_scheme {
+    use serde::{Deserialize, Serializer};
+
+    pub(super) fn serialize<S>(scheme: &http::uri::Scheme, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(scheme.as_str())
+    }
+    /// deserialization function for uri scheme
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<http::uri::Scheme, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let str_val = String::deserialize(deserializer)?;
+        <http::uri::Scheme as std::str::FromStr>::from_str(&str_val)
+            .map_err(|e| serde::de::Error::custom(format!("Failed to parse uri: {e:?}")))
+    }
 }
 
 #[derive(Debug)]
@@ -296,7 +306,7 @@ struct Substituted;
 #[derive(Debug)]
 struct NotSubstituted;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndPoint<T> {
     description: Option<String>,
@@ -615,7 +625,7 @@ impl std::fmt::Display for Method {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Body {
     kind: String,
@@ -623,7 +633,7 @@ struct Body {
     data: BodyData,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 enum BodyData {
     #[serde(rename = "data")]
