@@ -1,34 +1,30 @@
-[[environment]]
-name = "dev"
+[environment.dev]
 scheme = "http"
 host = "httpbin.org"
 
-[environment.store]
+[environment.dev.store]
 key_1 = "value_1"
 key_2 = "value_4"
 
 # -------------------------------------------------------
 
-[[environment]]
-name = "prod"
+[environment.prod]
 scheme = "https"
 host = "httpbin.org"
 
-[environment.store]
+[environment.prod.store]
 key_1 = "value_2"
 
 # =======================================================
 
-[[endpoint]]
-name = "get"
+[endpoint.get]
 alias = "g"
 path = "/get"
 method = "get"
 headers = {x-abc= ["d", "e"], header-key = ["header-value"]}
 pre_hook.script = "./example-prehook.nu"
 
-[[endpoint]]
-name = "post"
+[endpoint.post]
 path = "/post"
 method = "post"
 body = {kind = "application/json", data = '{"a": "b", "c": [1,2,3]}'}

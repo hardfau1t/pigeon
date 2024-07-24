@@ -1,8 +1,8 @@
 use color_eyre::eyre::{bail, Context};
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Borrow, collections::HashMap, marker::PhantomData, ops::Deref, path::Path, rc::Rc,
-    str::FromStr,
+    borrow::Borrow, collections::HashMap, fmt::Write, marker::PhantomData, ops::Deref, path::Path,
+    rc::Rc, str::FromStr,
 };
 use tracing::{debug, error, info, instrument, trace, warn};
 
@@ -26,18 +26,27 @@ impl Bundle {
         Ok(Self::build(&config.project, service_mods))
     }
 
+    /// finds endpoint or module pointed by series of keys
+    ///
+    /// * `keys`: list of keys pointing to endpoint or another submodule
+    ///
+    /// # returns
+    /// 1. Optional endpoint with set of environments it contains
+    /// 2. Optional submodule with given path
+    #[instrument(skip(keys))]
     fn find(
         &self,
         keys: &[impl Borrow<str>],
     ) -> (
-        Option<(&EndPoint<NotSubstituted>, &[Rc<Environment>])>,
+        Option<(&EndPoint<NotSubstituted>, &HashMap<String, Rc<Environment>>)>,
         Option<&Module>,
     ) {
-        let mut iterator = keys.iter();
-        let Some(service_name) = iterator.next() else {
+        let mut key_iterator = keys.iter();
+        let Some(service_name) = key_iterator.next() else {
             eprintln!("Available services: {:#?}", self.services.keys());
             return (None, None);
         };
+        // first key should be service and should exist
         let Some(root_service) = self.services.get(service_name.borrow()) else {
             error!(
                 service = service_name.borrow(),
@@ -45,10 +54,10 @@ impl Bundle {
             );
             return (None, None);
         };
-        let Ok((endpoint, last_service)) = iterator.try_fold(
+        let Ok((endpoint, last_service)) = key_iterator.try_fold(
             (None, Some(root_service)),
-            |(_endpoints, sub_services), key| {
-                if let Some(sub_service) = sub_services {
+            |(_endpoints, current_service), key| {
+                if let Some(sub_service) = current_service {
                     Ok(sub_service.get(&key.borrow()))
                 } else {
                     debug!(key = key.borrow(), "Failed to find");
@@ -66,20 +75,24 @@ impl Bundle {
     pub fn view<T: Borrow<str>>(&self, keys: &[T]) {
         let (endpoint, last_service) = self.find(keys);
         if let Some((endpoint, environ)) = endpoint {
-            eprintln!("{}", endpoint);
+            eprintln!(
+                "======== {} ======\n{}",
+                keys[keys.len() - 1].borrow(),
+                endpoint
+            );
             eprintln!("Environments:");
             environ
                 .iter()
-                .for_each(|env| eprintln!("\t{}", env.as_ref()));
+                .for_each(|(env_name, env)| eprintln!("\t{env_name}: {}", env.as_ref()));
         }
         if let Some(service) = last_service {
             let endpoints = service
                 .endpoints
                 .iter()
-                .map(|ep| {
+                .map(|(ep_name, ep)| {
                     format!(
                         "{}{}",
-                        &ep.name,
+                        &ep_name,
                         ep.alias
                             .as_ref()
                             .map(|alias| format!(" ({})", alias))
@@ -93,7 +106,7 @@ impl Bundle {
             service
                 .environments
                 .iter()
-                .for_each(|env| println!("\t{}", env.as_ref()));
+                .for_each(|(env_name, env)| eprintln!("\t{env_name}: {}", env.as_ref()));
             eprintln!(
                 "sub modules under this module: {:?}",
                 service.submodules.keys()
@@ -126,18 +139,16 @@ impl Bundle {
                 constants::KEY_CURRENT_ENVIRONMENT
             )
         };
-        let Some(current_env) = environments
-            .iter()
-            .find(|env| &env.name == current_env_name)
-        else {
+        let Some(current_env) = environments.get(current_env_name) else {
+            let a = environments
+                .keys()
+                .map(|key| key.as_str())
+                .collect::<Vec<_>>()
+                .as_slice()
+                .join(", ");
             bail!(
                 "{current_env_name} environment is not configured, available are: {}",
-                environments
-                    .iter()
-                    .map(|env| env.name.as_str())
-                    .collect::<Vec<_>>()
-                    .as_slice()
-                    .join(", ")
+                a
             )
         };
         debug!("Current environment: {current_env:?}");
@@ -163,8 +174,8 @@ impl Bundle {
                     } = service_mod;
                     let environments = service_mod_environments
                         .into_iter()
-                        .map(|environ| Rc::new(environ))
-                        .collect::<Vec<_>>();
+                        .map(|(name, environ)| (name, Rc::new(environ)))
+                        .collect::<HashMap<_, _>>();
 
                     let submodules = submodules
                         .into_iter()
@@ -192,8 +203,8 @@ impl Bundle {
 
 #[derive(Debug)]
 struct Module {
-    environments: Vec<std::rc::Rc<Environment>>,
-    endpoints: Vec<EndPoint<NotSubstituted>>,
+    environments: HashMap<String, std::rc::Rc<Environment>>,
+    endpoints: HashMap<String, EndPoint<NotSubstituted>>,
     submodules: HashMap<String, Self>,
 }
 
@@ -202,15 +213,11 @@ impl Module {
         &self,
         key: &impl AsRef<str>,
     ) -> (
-        Option<(&EndPoint<NotSubstituted>, &[Rc<Environment>])>,
+        Option<(&EndPoint<NotSubstituted>, &HashMap<String, Rc<Environment>>)>,
         Option<&Self>,
     ) {
         let key = key.as_ref();
-        let ep = self
-            .endpoints
-            .iter()
-            .find(|ep| ep.name == key || ep.alias.as_ref().is_some_and(|alias| alias == key))
-            .map(|ep| (ep, self.environments.as_slice()));
+        let ep = self.endpoints.get(key).map(|ep| (ep, &self.environments));
         let subm = self.submodules.get(key);
 
         (ep, subm)
@@ -220,7 +227,6 @@ impl Module {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Environment {
-    name: String,
     #[serde(deserialize_with = "deserialize_scheme")]
     scheme: http::uri::Scheme,
     host: String,
@@ -233,8 +239,7 @@ impl std::fmt::Display for Environment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}: {}://{}{}",
-            self.name,
+            "{}://{}{}",
             self.scheme,
             self.host,
             self.port
@@ -279,7 +284,6 @@ struct NotSubstituted;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndPoint<T> {
-    name: String,
     pub alias: Option<String>,
     method: Method,
     #[serde(default)]
@@ -296,26 +300,22 @@ pub struct EndPoint<T> {
 
 impl<T> std::fmt::Display for EndPoint<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = format!(
-            "{}{}",
-            self.name,
-            self.alias
-                .as_ref()
-                .map(|alias| format!(" ({})", alias))
-                .unwrap_or("".to_string())
-        );
+        let alias = self.alias.as_deref().unwrap_or("");
         let method = &self.method;
         let endpoint = &self.path;
         let params = &self.params;
-        let headers = self
-            .headers
-            .iter()
-            .map(|(key, value)| format!("{key}: {value:?}\n"))
-            .collect::<String>();
+        let headers = self.headers.iter().fold(
+            String::new(),
+            |mut storage, (header_name, header_values)| {
+                //format!()
+                let _ = writeln!(storage, "{header_name}: {header_values:?}");
+                storage
+            },
+        );
         let body = &self.body;
         writeln!(
             f,
-            r#"==== {name} ====
+            r#"alias: {alias}
 {method} {endpoint}
 params: {params:?}
 headers:
@@ -348,7 +348,6 @@ impl EndPoint<NotSubstituted> {
             headers.insert(key, values_subst);
         }
         Ok(EndPoint::<Substituted> {
-            name: self.name.clone(),
             alias: self.alias.clone(),
             method: self.method,
             headers,
@@ -370,7 +369,7 @@ impl EndPoint<Substituted> {
         flags: &[impl Borrow<str>],
     ) -> color_eyre::Result<Option<Vec<u8>>> {
         trace!("executing query");
-        let mut flags_iter = flags.split(|flag| &flag.borrow() == &"--");
+        let mut flags_iter = flags.split(|flag| flag.borrow() == "--");
         let request_hook_flags = flags_iter.next().unwrap_or(&[]);
         let response_hook_flags = flags_iter.next().unwrap_or(&[]);
         let Self {
@@ -405,7 +404,7 @@ impl EndPoint<Substituted> {
         };
 
         // run pre-hook if it is available
-        let mapped_request_obj = pre_hook
+        let mut mapped_request_obj = pre_hook
             .map(|hook| hook.run(&request_object, request_hook_flags))
             .transpose()?
             .map(|mut obj| {
@@ -414,6 +413,7 @@ impl EndPoint<Substituted> {
                 obj
             })
             .unwrap_or(request_object);
+        let body = mapped_request_obj.body.take();
         let request = mapped_request_obj.into_request(base_url)?;
         info!("Query {} {}", request.method(), request.url());
         info!("headers:\n{}", {
@@ -430,7 +430,7 @@ impl EndPoint<Substituted> {
         });
 
         // generate request object
-        let resp = if let Some(body) = mapped_request_obj.body {
+        let resp = if let Some(body) = body {
             match std::str::from_utf8(body.as_slice()) {
                 Ok(str_body) => info!("request body: '{str_body}'"),
                 Err(e) => {
@@ -502,7 +502,7 @@ struct RequestHookObject {
 }
 
 impl RequestHookObject {
-    fn into_request(&self, base_url: url::Url) -> Result<ureq::Request, url::ParseError> {
+    fn into_request(self, base_url: url::Url) -> Result<ureq::Request, url::ParseError> {
         let url = base_url.join(self.path.as_str())?;
         let request = ureq::request(&self.method.to_string(), url.as_str());
 
@@ -511,7 +511,7 @@ impl RequestHookObject {
             .headers
             .iter()
             .fold(request, |request, (key, values)| {
-                values.into_iter().fold(request, |request, value| {
+                values.iter().fold(request, |request, value| {
                     request.set(key.as_str(), value.as_str())
                 })
             })

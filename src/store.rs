@@ -42,11 +42,10 @@ impl Store {
                 warn!("{config_path:?} is not directory, try to remove it and try again");
                 return Err(StoreError::InvalidPath);
             }
-        } else {
-            if let Err(e) = std::fs::create_dir(&config_path) {
-                debug!("Failed to create config store directory: {e}");
-                return Err(StoreError::InvalidPath);
-            }
+            // directory doesn't exists so if creation success then ok else error out
+        } else if let Err(e) = std::fs::create_dir(&config_path) {
+            debug!("Failed to create config store directory: {e}");
+            return Err(StoreError::InvalidPath);
         };
 
         config_path.push(package);

@@ -118,10 +118,10 @@ impl Config {
 #[serde(deny_unknown_fields)]
 pub struct ServiceModule {
     #[serde(rename = "environment")]
-    pub environments: Vec<Environment>,
+    pub environments: HashMap<String, Environment>,
     #[serde(default)]
     #[serde(rename = "endpoint")]
-    pub endpoints: Vec<EndPoint>,
+    pub endpoints: HashMap<String, EndPoint>,
     #[serde(default)]
     pub submodules: HashMap<String, SubModule>,
 }
@@ -129,7 +129,7 @@ pub struct ServiceModule {
 impl ServiceModule {
     fn from_file(path_ref: &impl AsRef<Path>) -> Result<(String, Self), PopulateError> {
         let path = path_ref.as_ref();
-        if let None = path.extension().filter(|ext| *ext == "toml") {
+        if path.extension().filter(|ext| *ext == "toml").is_none() {
             return Err(PopulateError::UnexpectedFile(path.into()));
         }
         let content = std::fs::read_to_string(path)?;
@@ -196,7 +196,6 @@ impl ServiceModule {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnvironmentBuilder {
-    name: String,
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_scheme")]
     scheme: Option<http::uri::Scheme>,
@@ -219,9 +218,11 @@ where
 }
 
 impl EnvironmentBuilder {
+    /// tries to build environment from given partial builder
+    ///
+    /// * `template_opt`: parent environment, if this is present then if any of the variables are missing in builder then it will take from parent
     fn build(self, template_opt: Option<&Environment>) -> Option<Environment> {
         let Self {
-            name,
             scheme,
             host,
             port,
@@ -229,21 +230,16 @@ impl EnvironmentBuilder {
         } = self;
         let Some(template) = template_opt else {
             return Some(Environment {
-                name,
                 scheme: scheme?,
                 host: host?,
                 port,
                 store: builder_key_store,
             });
         };
-        if name != template.name {
-            return None;
-        }
 
         let mut key_store = template.store.clone();
-        key_store.extend(builder_key_store.into_iter());
+        key_store.extend(builder_key_store);
         Some(Environment {
-            name,
             scheme: scheme.unwrap_or(template.scheme.clone()),
             host: host.unwrap_or(template.host.clone()),
             port: port.or(template.port),
@@ -257,10 +253,10 @@ impl EnvironmentBuilder {
 pub struct SubModule {
     #[serde(default)]
     #[serde(rename = "environment")]
-    environments: Vec<EnvironmentBuilder>,
+    environments: HashMap<String, EnvironmentBuilder>,
     #[serde(default)]
     #[serde(rename = "endpoint")]
-    endpoints: Vec<EndPoint>,
+    endpoints: HashMap<String, EndPoint>,
     #[serde(default)]
     submodules: HashMap<String, Self>,
 }
@@ -317,7 +313,7 @@ impl SubModule {
     }
     fn from_file(path_ref: &impl AsRef<Path>) -> Result<(String, Self), PopulateError> {
         let path = path_ref.as_ref();
-        if let None = path.extension().filter(|ext| *ext == "toml") {
+        if path.extension().filter(|ext| *ext == "toml").is_none() {
             return Err(PopulateError::UnexpectedFile(path.into()));
         }
         let content = std::fs::read_to_string(path)?;
@@ -330,37 +326,43 @@ impl SubModule {
     }
 
     #[tracing::instrument(skip(self, parent_env_list))]
-    pub fn into_module(self, parent_env_list: &[Rc<Environment>]) -> Module {
+    pub fn into_module(self, parent_env_list: &HashMap<String, Rc<Environment>>) -> Module {
         debug!("converting submodule: {self:?} to module with env {parent_env_list:?}");
         let SubModule {
             environments: sub_mod_environs,
             endpoints,
             submodules,
         } = self;
+        // get current module private environment list inheriting parent environments
         let mut environments = sub_mod_environs
             .into_iter()
-            .filter_map(|environ| {
-                let parent_env = parent_env_list.iter().find_map(|env| {
-                    if env.name == environ.name {
-                        Some(env.as_ref())
-                    } else {
-                        None
-                    }
-                });
-                match environ.build(parent_env) {
-                    Some(e) => Some(Rc::new(e)),
+            .filter_map(|(current_env_name, current_env)| {
+                let parent_env =
+                    parent_env_list
+                        .iter()
+                        .find_map(|(parent_env_name, parent_env)| {
+                            if parent_env_name == &current_env_name {
+                                Some(parent_env.as_ref())
+                            } else {
+                                None
+                            }
+                        });
+                match current_env.build(parent_env) {
+                    Some(e) => Some((current_env_name, Rc::new(e))),
                     None => {
                         warn!("Failed to construct environ, skipping");
                         None
                     }
                 }
             })
-            .collect::<Vec<_>>();
-        parent_env_list.iter().for_each(|penv| {
-            if let None = environments.iter().find(|env| env.name == penv.name) {
-                environments.push(penv.clone())
+            .collect::<HashMap<_, _>>();
+        // add any missing environments which are in parent but are not in current mod
+        parent_env_list.iter().for_each(|(penv_name, penv)| {
+            if !environments.contains_key(penv_name) {
+                environments.insert(penv_name.clone(), penv.clone());
             }
         });
+
         let submodules = submodules
             .into_iter()
             .map(|(name, sub_mod)| (name, sub_mod.into_module(&environments)))
