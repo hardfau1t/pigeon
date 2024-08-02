@@ -101,6 +101,7 @@ impl Bundle {
         keys: &[T],
         flags: &[impl Borrow<str>],
         persistent_config: bool,
+        dry_run: bool,
     ) -> Result<Option<Vec<u8>>, color_eyre::Report> {
         trace!("running query");
         let (Some((endpoint, environments)), _) = self.find(keys) else {
@@ -135,7 +136,12 @@ impl Bundle {
         let built_endpoint = endpoint
             .substitute(&config_store)
             .wrap_err("Failed to substitute key values in query")?;
-        built_endpoint.execute(current_env.as_ref().try_into()?, &mut config_store, flags)
+        built_endpoint.execute(
+            current_env.as_ref().try_into()?,
+            &mut config_store,
+            flags,
+            dry_run,
+        )
     }
 
     fn build(package: &impl Borrow<str>, service_mods: HashMap<String, ServiceModule>) -> Self {
@@ -392,6 +398,7 @@ impl EndPoint<Substituted> {
         base_url: url::Url,
         config_store: &mut Store,
         flags: &[impl Borrow<str>],
+        dry_run: bool,
     ) -> color_eyre::Result<Option<Vec<u8>>> {
         trace!("executing query");
         let mut flags_iter = flags.split(|flag| flag.borrow() == "--");
@@ -463,9 +470,15 @@ impl EndPoint<Substituted> {
                     info!("request body: {body:x?}");
                 }
             }
-
+            if dry_run {
+                return Ok(None);
+            }
             request.send_bytes(body.as_slice())
         } else {
+            if dry_run {
+                return Ok(None);
+            }
+
             request.call()
         };
         let response = match resp {

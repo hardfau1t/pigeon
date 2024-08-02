@@ -31,6 +31,11 @@ struct Arguments {
     #[arg(short, long)]
     list: bool,
 
+    /// don't run the query just run till pre-hook
+    /// use with --verbose(-v) to be useful
+    #[arg(short = 'n', long = "dry-run")]
+    dry_run: bool,
+
     /// output collected services as json output
     #[arg(short, long, conflicts_with_all(["list", "endpoint"]))]
     json: bool,
@@ -72,11 +77,16 @@ fn main() -> color_eyre::Result<()> {
 
     if args.list {
         services.view(&args.endpoint);
-    }else if args.json{
+    } else if args.json {
         let stdout = std::io::stdout();
         serde_json::to_writer(stdout, &services)?;
     } else {
-        let response_body = services.run(&args.endpoint, &args.args, !args.no_persistent)?;
+        let response_body = services.run(
+            &args.endpoint,
+            &args.args,
+            !args.no_persistent,
+            args.dry_run,
+        )?;
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {
                 std::fs::write(&output_file, body)
