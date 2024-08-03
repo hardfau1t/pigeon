@@ -531,8 +531,7 @@ impl EndPoint<Substituted> {
             post_hook_obj
                 .headers
                 .iter()
-                .map(|(key, values)| {
-                    let value = values.join(", ");
+                .map(|(key, value)| {
                     format!("< {key}: {value}")
                 })
                 .collect::<Vec<_>>()
@@ -588,7 +587,7 @@ impl RequestHookObject {
 /// this will be given to prehook script
 #[derive(Debug, Deserialize, Serialize)]
 struct ResponseHookObject {
-    headers: HashMap<String, Vec<String>>,
+    headers: HashMap<String, String>,
     body: Option<Vec<u8>>,
     status: u16,
     status_text: String,

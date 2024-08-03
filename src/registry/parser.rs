@@ -119,14 +119,19 @@ impl Config {
 pub struct ServiceModule {
     #[serde(default)]
     pub alias: Option<String>,
+
     #[serde(default)]
     pub description: Option<String>,
+
     #[serde(rename = "environment")]
     pub environments: HashMap<String, Environment>,
+
     #[serde(default)]
     #[serde(rename = "endpoint")]
     pub endpoints: HashMap<String, EndPoint>,
+
     #[serde(default)]
+    #[serde(rename = "submodule")]
     pub submodules: HashMap<String, SubModule>,
 }
 
