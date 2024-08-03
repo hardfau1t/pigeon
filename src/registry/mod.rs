@@ -102,6 +102,8 @@ impl Bundle {
         flags: &[impl Borrow<str>],
         persistent_config: bool,
         dry_run: bool,
+        skip_prehook: bool,
+        skip_posthook: bool,
     ) -> Result<Option<Vec<u8>>, color_eyre::Report> {
         trace!("running query");
         let (Some((endpoint, environments)), _) = self.find(keys) else {
@@ -141,6 +143,8 @@ impl Bundle {
             &mut config_store,
             flags,
             dry_run,
+            skip_prehook,
+            skip_posthook,
         )
     }
 
@@ -399,6 +403,8 @@ impl EndPoint<Substituted> {
         config_store: &mut Store,
         flags: &[impl Borrow<str>],
         dry_run: bool,
+        skip_prehook: bool,
+        skip_posthook: bool,
     ) -> color_eyre::Result<Option<Vec<u8>>> {
         trace!("executing query");
         let mut flags_iter = flags.split(|flag| flag.borrow() == "--");
@@ -437,6 +443,7 @@ impl EndPoint<Substituted> {
 
         // run pre-hook if it is available
         let mut mapped_request_obj = pre_hook
+            .filter(|_| !skip_prehook)
             .map(|hook| hook.run(&request_object, request_hook_flags))
             .transpose()?
             .map(|mut obj| {
@@ -515,6 +522,7 @@ impl EndPoint<Substituted> {
                 .join("\n")
         );
         let hook_response = post_hook
+            .filter(|_| !skip_posthook)
             .map(|hook| hook.run(&post_hook_obj, response_hook_flags))
             .transpose()?
             .map(|mut obj| {

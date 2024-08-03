@@ -36,6 +36,18 @@ struct Arguments {
     #[arg(short = 'n', long = "dry-run")]
     dry_run: bool,
 
+    /// don't run any hooks
+    #[arg(short = 's', long = "skip-hooks")]
+    skip_hooks: bool,
+
+    /// don't run pre request hook
+    #[arg(long = "skip-prehook", conflicts_with("skip_hooks"))]
+    skip_prehook: bool,
+
+    /// don't run post responnse hook
+    #[arg(long = "skip-posthook", conflicts_with("skip_hooks"))]
+    skip_posthook: bool,
+
     /// output collected services as json output
     #[arg(short, long, conflicts_with_all(["list", "endpoint"]))]
     json: bool,
@@ -86,6 +98,8 @@ fn main() -> color_eyre::Result<()> {
             &args.args,
             !args.no_persistent,
             args.dry_run,
+            args.skip_hooks || args.skip_prehook,
+            args.skip_hooks || args.skip_posthook,
         )?;
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {
