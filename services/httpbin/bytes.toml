@@ -5,3 +5,4 @@ store = {key_1 = "value_3", bytes="100"}
 path = "/bytes/${bytes}"
 method = "get"
 headers = {x-abc= "d, e", header-key = "header-value"}
+post_hook.script = "./example-posthook.nu"

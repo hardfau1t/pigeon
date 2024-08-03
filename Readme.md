@@ -16,37 +16,64 @@ You can find list of other tools [here]()
 
 Structure of the file looks like below
 ```toml
+# should match the version(major and minor) of the binary
 version = "<version string>"
+# useful if you are testing in automation provide different names to isolate configs
+project = "<project name>"
+api_directory = "./services" # Place where services/apis are present
+```
+
+### Services
+
+Can also be said as `module`.
+`api_directory` contains **services**/**modules**, structure of this directory looks like below
+```
+svc_a.toml
+svc_b/index.toml
+svc_b/svc_c.toml
+svc_b/svc_d/index.toml
+svc_b/svc_d/index.toml
+```
+Here `svc_a` and `svc_b` are two main services which can have infinitely nested submodules.
+Where all of the submodules will inherit parent module environments and you can override
+parent environments or create new environments.
+
+Each service or module will have
+
+- At least one environment
+- 0 or more endpoints
+
+Where as submodules doesn't require environment they will inherit parent modules environments.
+To override parent environment in submodule create Environment with same name as in parent.
+
+The service/module structure looks like below
+```toml
+alias = "<shortname>"   # Optional short name for module/submodule
+description = "<desc>"  # Optional description for given module
 
 # List of environments like dev, prod etc, and hostname/ip of the service
-[[environment]]
-name = "<environment name>"
-[[environment.service]]
-name = "<service name>"
+# Required for services/modules but optional for submodules
+[environment.<name>]
 scheme = "https|http"
 host = "<ip address/hostname>"
+port = 80           # Its an optional field can range from 0-65535
+prefix = "/prefix"  # Optional prefix which will be applied to all endpoints path under this module/submodule
+headers = {}        # Optional Map of headers which will be applied to all endpoints, headers in endpoints can override these values
+[environment.<name>.store] # Optional map containing key value pair for substitutions
+key = "value"
 
-# ... more services if you have
 # ... more environments
 
-# services list
 
-[[service]]
-name = "<service name>" # this should match with the environment service name
-alias = "<short name>" # OPTIONAL, short service name which can be used while querying
-[[service.endpoint]]
-name = "<endpoint name>" # identifier for the given endpoint
+# endpoints
+[endpoint.<name>]
 alias = "<short name>" # OPTIONAL, short name for the endpoint
 method = "get|post|delete|patch|put|options|head|connect|trace"
 path = "<endpoint path>" # url path without ip or scheme or port
 # OPTIONAL: headers, list of list of key value pairs
-# NOTE: key should be unique and for 1 key there can be only 1 value.
-# exception for this is when key starts with `x-`. Generally this should be avoided as per
-# http standards, but this is allowed
-headers = [
-    ["key", "value"],
-    ["x-key", "value-1", "value-2"]
-]
+# duplicate headers with same keys are not allowed as per HTTP standards
+# if you need to send values for same header then send them as comma separated
+headers = {x-abc= "d, e", header-key = "header-value"}
 # OPTIONAL: query args, here key can be duplicate(unlike headers)
 params = [
     ["key", "value"],
@@ -59,26 +86,35 @@ pre_hook.script = "<path>" # path to script file
 # hook or script which are executed on response data
 post_hook.closure = "<inline>" # NOT YET SUPPORTED inline script, commands are directly written in string, conflicts with script
 post_hook.script = "<path>" # path to script file
-[service.endpoint.body]
+
+[endpoint.<name>.body]
 kind = "<content-type>" # this signifies body content-type request headers will be set with given Content-Type
 data = "<inline-data>" # body is directly represented in raw string, This conflicts with `path`
 path = "<data-file>" # file path containing body, This conflicts with `data`
-# list of hooks or scripts which are executed before running query, which can be used to modify headers, body etc
+
+# You can put submodules in same file as
+[submodule.<subm_name>.environment.<name>]
+# environment configs
+[submodule.<subm_name>.endpoint.<name>]
+# endpoint config
 ```
 
 ### Path substitutions
 
 To keep it simple currently we are only supporting substitutions for path part of url.
-i.e. `/foo/${bar}` will try to replace bar with `$bar` from environment variable.
+i.e. `/foo/${bar}` will try to replace bar with `$bar` from environment variable or from [config store](#configuration-store).
 If don't want to substitutions then escape `$` with `\`.
-NOTE: if you are using double quoted strings then you have to double escape it.
 
+**NOTE**: if you are using double quoted strings then you have to double escape it like `"\\\\$abc"`
 
 ### Hooks
 
 Hooks takes msgpack serialized data and runs set of operations and writes serialized msgpack data to stdout.
 Why msgpack? unlike json or any other formats it can serialize binary data and responses can contain binary data.
 As for other formats like json serialized data support might be added later but its not yet supported.
+
+You can pass flags for hooks during runtime. Any flags passed after `--` will be consider to pre-hook.
+Second `--` will indicate that any flags after that will be given to post-hook script
 
 Check [example pre-hook](./example-prehook.nu) or [example post-hook](./example-posthook.nu) scripts
 
@@ -87,76 +123,58 @@ Note: for debugging you can write to stderr, which will be printed with log leve
 Note: whatever is written to stdout is considered as output and gets deserialized
 
 #### Request hook structure
-```
+```json
 {
   "headers": {
-# Note values are represented as list, if duplicate keys are found then all of them are passed as list of values, but if there is a key then it has atleast 1 value
-    "content-type": [
-      "application/json"
-    ],
-    "key": [
-      "value"
-    ]
+    "a": "b",
+    "c": "d",
+    "header-key": "header-value",
+    "x-abc": "d, e"
   },
   "params": [
-    [
-      "a",
-      "b"
-    ],
-    [
-      "arg",
-      "value"
-    ]
+    [ "a", "b" ],
+    [ "arg", "value" ]
   ],
-  "body": [
-    123,
-    34,
-    97,
-    34,
-    58,
-    32,
-    34,
-    98,
-    34,
-    44,
-    32,
-  ],
-  "host": "httpbin.org",
-  "path": "/post",
-  "scheme": "http"
+  "body": null,
+  "path": "/get",
+  "method": "get",
+  "config": {
+    "NEST": "dev",
+  }
 }
 ```
 
 #### Response Hook structure
-```
+```json
 {
   "headers": {
-# Note values are represented as list, if duplicate keys are found then all of them are passed as list of values, but if there is a key then it has atleast 1 value
-    "content-type": [
-      "application/octet-stream"
-    ],
-    "content-length": [
-      "100"
-    ],
-    "access-control-allow-origin": [
-      "*"
-    ]
+    "content-type": "application/octet-stream",
+    "date": "Sat, 03 Aug 2024 12:25:36 GMT",
+    "server": "gunicorn/19.9.0",
+    "content-length": "10",
+    "connection": "keep-alive",
+    "access-control-allow-origin": "*",
+    "access-control-allow-credentials": "true"
+
   },
-  "body": [
-    38,
-    18,
-    232,
-    245,
-    255,
-    89,
-    255,
-    151,
-    27,
-    200,
-    114,
-    144,
-  ],
+  "body": [ 115, 160, 17, 164, 210, 4, 93, 32, 195, 62],
   "status": 200,
-  "status_text": "OK"
+  "status_text": "OK",
+  "config": {
+    "NEST": "dev",
+  }
 }
 ```
+
+#### Configuration Store
+
+For every project one config store file is created. For linux it is in `$XDG_CACHE_DIR/pigeon/<project>`.
+Its a simple key value pair of strings and these will be used for substitution. Scripts/hooks can set these values
+in their return object
+
+Also key values from environment variables will also be used for substitutions.
+
+Priority of these key values is as follows
+1. environment variables
+2. config store
+3. `environment.store` section in services
