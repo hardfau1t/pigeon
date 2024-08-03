@@ -1,4 +1,4 @@
-use color_eyre::eyre::Context;
+use color_eyre::eyre::WrapErr;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{borrow::Borrow, io::Write};
 use tracing::{debug, info, instrument, trace};
@@ -45,7 +45,8 @@ impl Hook {
                     "pre-hook stderr: `{}`",
                     String::from_utf8_lossy(&output.stderr)
                 );
-                let pre_hook_obj: T = rmp_serde::from_slice(output.stdout.as_ref()).unwrap();
+                let pre_hook_obj: T = rmp_serde::from_slice(output.stdout.as_ref())
+                    .wrap_err("Failed to deserialize output of hooks")?;
                 Ok(pre_hook_obj)
             }
         }

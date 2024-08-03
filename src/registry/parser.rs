@@ -207,7 +207,7 @@ struct EnvironmentBuilder {
     port: Option<u16>,
     prefix: Option<String>,
     #[serde(default)]
-    headers: HashMap<String, Vec<String>>,
+    headers: HashMap<String, String>,
 
     #[serde(default)]
     store: HashMap<String, String>,

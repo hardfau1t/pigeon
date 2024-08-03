@@ -266,7 +266,7 @@ pub struct Environment {
     // common headers which are applied to each query
     // headers in query has more priority than this
     #[serde(default)]
-    headers: HashMap<String, Vec<String>>,
+    headers: HashMap<String, String>,
     #[serde(default)]
     store: HashMap<String, String>,
 }
@@ -337,7 +337,7 @@ pub struct EndPoint<T> {
     alias: Option<String>,
     method: Method,
     #[serde(default)]
-    headers: HashMap<String, Vec<String>>,
+    headers: HashMap<String, String>,
     #[serde(default)]
     params: Vec<(String, String)>,
     body: Option<Body>,
@@ -381,7 +381,7 @@ impl EndPoint<NotSubstituted> {
     fn substitute(
         &self,
         config_store: &Store,
-        base_headers: &HashMap<String, Vec<String>>,
+        base_headers: &HashMap<String, String>,
     ) -> Result<EndPoint<Substituted>, subst::Error> {
         trace!("Constructing query by substing values from config_store");
         let key_val_store = config_store.deref();
@@ -393,12 +393,8 @@ impl EndPoint<NotSubstituted> {
             params.push((key, val))
         }
         let mut headers = HashMap::with_capacity(self.headers.len());
-        for (key, values) in base_headers.iter().chain(&self.headers) {
-            let mut values_subst = Vec::with_capacity(values.len());
-            for val in values {
-                let val = subst::substitute(val, key_val_store)?;
-                values_subst.push(val)
-            }
+        for (key, value) in base_headers.iter().chain(&self.headers) {
+            let values_subst = subst::substitute(value, key_val_store)?;
             let key = subst::substitute(key, key_val_store)?;
             headers.insert(key, values_subst);
         }
@@ -449,7 +445,7 @@ impl EndPoint<Substituted> {
             })
             .transpose()?;
         let body = body.map(|(kind, body)| {
-            headers.insert("Content-Type".to_string(), vec![kind]);
+            headers.insert("Content-Type".to_string(), kind);
             body
         });
         let request_object = RequestHookObject {
@@ -558,7 +554,7 @@ impl EndPoint<Substituted> {
 #[derive(Debug, Serialize, Deserialize)]
 struct RequestHookObject {
     #[serde(default)]
-    headers: HashMap<String, Vec<String>>,
+    headers: HashMap<String, String>,
     #[serde(default)]
     params: Vec<(String, String)>,
     body: Option<Vec<u8>>,
@@ -577,10 +573,8 @@ impl RequestHookObject {
         let request = self
             .headers
             .iter()
-            .fold(request, |request, (key, values)| {
-                values.iter().fold(request, |request, value| {
-                    request.set(key.as_str(), value.as_str())
-                })
+            .fold(request, |request, (key, value)| {
+                request.set(key.as_str(), value.as_str())
             })
             .query_pairs(
                 self.params

@@ -8,7 +8,7 @@ def main [
         print -e ($data | to nuon)
     }
     $data
-    | update headers {|row|  $row.headers | insert foo [bar] }
+    | update headers {|row|  $row.headers | insert foo bar }
     | update params {|msg| $msg.params | append  [["arg" , "value"]]}
     | to msgpack | ^cat
 }
