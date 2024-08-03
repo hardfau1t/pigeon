@@ -205,6 +205,10 @@ struct EnvironmentBuilder {
     scheme: Option<http::uri::Scheme>,
     host: Option<String>,
     port: Option<u16>,
+    prefix: Option<String>,
+    #[serde(default)]
+    headers: HashMap<String, Vec<String>>,
+
     #[serde(default)]
     store: HashMap<String, String>,
 }
@@ -224,29 +228,37 @@ where
 impl EnvironmentBuilder {
     /// tries to build environment from given partial builder
     ///
-    /// * `template_opt`: parent environment, if this is present then if any of the variables are missing in builder then it will take from parent
-    fn build(self, template_opt: Option<&Environment>) -> Option<Environment> {
+    /// * `parent_env`: parent environment, if this is present then if any of the variables are missing in builder then it will take from parent
+    fn build(self, parent_env: Option<&Environment>) -> Option<Environment> {
         let Self {
             scheme,
             host,
             port,
+            prefix,
+            headers: builder_headers,
             store: builder_key_store,
         } = self;
-        let Some(template) = template_opt else {
+        let Some(template) = parent_env else {
             return Some(Environment {
                 scheme: scheme?,
                 host: host?,
                 port,
+                prefix: None,
+                headers: HashMap::new(),
                 store: builder_key_store,
             });
         };
 
         let mut key_store = template.store.clone();
         key_store.extend(builder_key_store);
+        let mut headers = template.headers.clone();
+        headers.extend(builder_headers);
         Some(Environment {
             scheme: scheme.unwrap_or(template.scheme.clone()),
             host: host.unwrap_or(template.host.clone()),
             port: port.or(template.port),
+            prefix: prefix.or(template.prefix.clone()),
+            headers,
             store: key_store,
         })
     }

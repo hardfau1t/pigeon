@@ -12,6 +12,7 @@ use parser::ServiceModule;
 
 use crate::{constants, store::Store};
 
+/// Set of Services
 #[derive(Debug, Serialize)]
 pub struct Bundle {
     services: HashMap<String, Module>,
@@ -81,9 +82,13 @@ impl Bundle {
         if let Some((endpoint, environ)) = endpoint {
             eprintln!("======== {} ======\n{}", last_key, endpoint);
             eprintln!("Environments:");
-            environ
-                .iter()
-                .for_each(|(env_name, env)| eprintln!("\t{env_name}: {}", env.as_ref()));
+            environ.iter().for_each(|(env_name, env)| {
+                eprintln!(
+                    "\t{env_name}: {}\n\t\theaders: {:?}",
+                    env.as_ref(),
+                    env.headers
+                )
+            });
         }
         if let Some(service) = last_service {
             eprintln!("====== {last_key} ======\n{service}");
@@ -95,11 +100,11 @@ impl Bundle {
     /// * `keys`: path which points to given query
     /// * `flags`: flags for hooks `--` will separate flags into pre-hook and post-hook flags
     /// * `persistent_config`: whether to store changes to config back
-    #[instrument(skip(flags, self))]
+    #[instrument(skip(hooks_flags, self))]
     pub fn run<T: Borrow<str> + std::fmt::Debug>(
         &self,
         keys: &[T],
-        flags: &[impl Borrow<str>],
+        hooks_flags: &[impl Borrow<str>],
         persistent_config: bool,
         dry_run: bool,
         skip_prehook: bool,
@@ -136,12 +141,12 @@ impl Bundle {
             entry.or_insert(value.clone());
         });
         let built_endpoint = endpoint
-            .substitute(&config_store)
+            .substitute(&config_store, &current_env.as_ref().headers)
             .wrap_err("Failed to substitute key values in query")?;
         built_endpoint.execute(
             current_env.as_ref().try_into()?,
             &mut config_store,
-            flags,
+            hooks_flags,
             dry_run,
             skip_prehook,
             skip_posthook,
@@ -256,6 +261,12 @@ pub struct Environment {
     scheme: http::uri::Scheme,
     host: String,
     port: Option<u16>,
+    // this will be applied to path of endpoint
+    prefix: Option<String>,
+    // common headers which are applied to each query
+    // headers in query has more priority than this
+    #[serde(default)]
+    headers: HashMap<String, Vec<String>>,
     #[serde(default)]
     store: HashMap<String, String>,
 }
@@ -264,12 +275,13 @@ impl std::fmt::Display for Environment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}://{}{}",
+            "{}://{}{}/{}",
             self.scheme,
             self.host,
             self.port
                 .map(|port| format!(":{}", port))
-                .unwrap_or("".to_string())
+                .unwrap_or("".to_string()),
+            self.prefix.as_deref().unwrap_or(""),
         )
     }
 }
@@ -278,16 +290,18 @@ impl TryInto<url::Url> for &Environment {
     type Error = url::ParseError;
 
     fn try_into(self) -> Result<url::Url, Self::Error> {
-        if let Some(port) = self.port {
-            url::Url::from_str(&format!(
-                "{}://{}:{}",
-                self.scheme.as_str(),
-                self.host,
-                port
-            ))
+        let port_str = if let Some(port) = self.port {
+            format!(":{port}")
         } else {
-            url::Url::from_str(&format!("{}://{}", self.scheme.as_str(), self.host))
-        }
+            "".to_string()
+        };
+        url::Url::from_str(&format!(
+            "{}://{}:{}/{}",
+            self.scheme.as_str(),
+            self.host,
+            port_str,
+            self.prefix.as_deref().unwrap_or("")
+        ))
     }
 }
 
@@ -337,6 +351,9 @@ pub struct EndPoint<T> {
 impl<T> std::fmt::Display for EndPoint<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{} {}", self.method, self.path)?;
+        if let Some(ref desc) = self.description {
+            writeln!(f, "{desc}.")?
+        }
         if let Some(ref alias) = self.alias {
             writeln!(f, "alias: {alias}")?
         }
@@ -361,7 +378,11 @@ impl<T> std::fmt::Display for EndPoint<T> {
 }
 impl EndPoint<NotSubstituted> {
     #[instrument(skip(self, config_store))]
-    fn substitute(&self, config_store: &Store) -> Result<EndPoint<Substituted>, subst::Error> {
+    fn substitute(
+        &self,
+        config_store: &Store,
+        base_headers: &HashMap<String, Vec<String>>,
+    ) -> Result<EndPoint<Substituted>, subst::Error> {
         trace!("Constructing query by substing values from config_store");
         let key_val_store = config_store.deref();
         let url_path = subst::substitute(&self.path, key_val_store)?;
@@ -372,7 +393,7 @@ impl EndPoint<NotSubstituted> {
             params.push((key, val))
         }
         let mut headers = HashMap::with_capacity(self.headers.len());
-        for (key, values) in &self.headers {
+        for (key, values) in base_headers.iter().chain(&self.headers) {
             let mut values_subst = Vec::with_capacity(values.len());
             for val in values {
                 let val = subst::substitute(val, key_val_store)?;

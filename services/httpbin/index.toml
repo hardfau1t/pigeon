@@ -19,6 +19,7 @@ key_1 = "value_2"
 
 [endpoint.get]
 alias = "g"
+description= "yes this gets some random data from httpbin"
 path = "/get"
 method = "get"
 headers = {x-abc= ["d", "e"], header-key = ["header-value"]}
