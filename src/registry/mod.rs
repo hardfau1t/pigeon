@@ -573,13 +573,9 @@ struct RequestHookObject {
 }
 
 impl RequestHookObject {
-    fn into_request(self, mut base_url: url::Url) -> Result<ureq::Request, url::ParseError> {
-        base_url
-            .path_segments_mut()
-            .expect("base url is expected to be base url")
-            .pop_if_empty()
-            .push(self.path.as_str());
-        let request = ureq::request(&self.method.to_string(), base_url.as_str());
+    fn into_request(self, base_url: url::Url) -> Result<ureq::Request, url::ParseError> {
+        let url = base_url.join(self.path.as_str())?;
+        let request = ureq::request(&self.method.to_string(), url.as_str());
 
         // add headers
         let request = self
