@@ -296,7 +296,7 @@ impl TryInto<url::Url> for &Environment {
             "".to_string()
         };
         url::Url::from_str(&format!(
-            "{}://{}:{}/{}",
+            "{}://{}{}/{}",
             self.scheme.as_str(),
             self.host,
             port_str,
