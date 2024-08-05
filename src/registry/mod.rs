@@ -385,15 +385,26 @@ impl EndPoint<NotSubstituted> {
     ) -> Result<EndPoint<Substituted>, subst::Error> {
         trace!("Constructing query by substing values from config_store");
         let key_val_store = config_store.deref();
+
+        // substitute url
         let url_path = subst::substitute(&self.path, key_val_store)?;
+
+        // substitute url
         let mut params = Vec::with_capacity(self.params.len());
         for (key, val) in &self.params {
             let key = subst::substitute(key, key_val_store)?;
             let val = subst::substitute(val, key_val_store)?;
             params.push((key, val))
         }
+
+        // substitute headers
         let mut headers = HashMap::with_capacity(self.headers.len());
-        for (key, value) in base_headers.iter().chain(&self.headers) {
+        for (key, value) in base_headers
+            .iter()
+            // only take keys from base which are not present in self headers
+            .filter(|(key, _)| !self.headers.contains_key(key.as_str()))
+            .chain(&self.headers)
+        {
             let values_subst = subst::substitute(value, key_val_store)?;
             let key = subst::substitute(key, key_val_store)?;
             headers.insert(key, values_subst);
@@ -531,9 +542,7 @@ impl EndPoint<Substituted> {
             post_hook_obj
                 .headers
                 .iter()
-                .map(|(key, value)| {
-                    format!("< {key}: {value}")
-                })
+                .map(|(key, value)| { format!("< {key}: {value}") })
                 .collect::<Vec<_>>()
                 .join("\n")
         );
