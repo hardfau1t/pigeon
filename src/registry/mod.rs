@@ -296,11 +296,14 @@ impl TryInto<url::Url> for &Environment {
             "".to_string()
         };
         url::Url::from_str(&format!(
-            "{}://{}{}/{}",
+            "{}://{}{}/{}/",
             self.scheme.as_str(),
             self.host,
             port_str,
-            self.prefix.as_deref().unwrap_or("")
+            self.prefix
+                .as_deref()
+                .map(|prefix| prefix.trim_matches('/'))
+                .unwrap_or("")
         ))
     }
 }
@@ -574,7 +577,8 @@ struct RequestHookObject {
 
 impl RequestHookObject {
     fn into_request(self, base_url: url::Url) -> Result<ureq::Request, url::ParseError> {
-        let url = base_url.join(self.path.as_str())?;
+        let path = self.path.as_str().trim_start_matches('/');
+        let url = base_url.join(path)?;
         let request = ureq::request(&self.method.to_string(), url.as_str());
 
         // add headers
