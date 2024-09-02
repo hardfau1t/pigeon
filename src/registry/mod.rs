@@ -1,4 +1,4 @@
-use color_eyre::eyre::{bail, Context, eyre};
+use color_eyre::eyre::{bail, eyre, Context};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow, collections::HashMap, marker::PhantomData, ops::Deref, path::Path, rc::Rc,
@@ -109,6 +109,7 @@ impl Bundle {
         dry_run: bool,
         skip_prehook: bool,
         skip_posthook: bool,
+        current_env: Option<&str>,
     ) -> Result<Option<Vec<u8>>, color_eyre::Report> {
         trace!("running query");
         let (Some((endpoint, environments)), _) = self.find(keys) else {
@@ -117,7 +118,11 @@ impl Bundle {
         let mut config_store = Store::with_env(&self.package)?;
         debug!("current config: {config_store:?}");
         config_store.persistent(persistent_config);
-        let Some(current_env_name) = config_store.get(constants::KEY_CURRENT_ENVIRONMENT) else {
+        let Some(current_env_name) = current_env.or_else(|| {
+            config_store
+                .get(constants::KEY_CURRENT_ENVIRONMENT)
+                .map(|s| s.as_str())
+        }) else {
             bail!(
                 "missing environment, set: {}",
                 constants::KEY_CURRENT_ENVIRONMENT
@@ -455,7 +460,9 @@ impl EndPoint<Substituted> {
         let body = body
             .map(|body| match body.data {
                 BodyData::Inline(d) => Ok((body.kind, d.into_bytes())),
-                BodyData::Path(path) => std::fs::read(&path).wrap_err_with(||eyre!("Couldn't read file {path:?}")).map(|content| (body.kind, content)),
+                BodyData::Path(path) => std::fs::read(&path)
+                    .wrap_err_with(|| eyre!("Couldn't read file {path:?}"))
+                    .map(|content| (body.kind, content)),
             })
             .transpose()?;
         let body = body.map(|(kind, body)| {

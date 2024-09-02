@@ -31,6 +31,10 @@ struct Arguments {
     #[arg(short, long)]
     list: bool,
 
+    /// use given environment
+    #[arg(short, long)]
+    environment: Option<String>,
+
     /// don't run the query just run till pre-hook
     /// use with --verbose(-v) to be useful
     #[arg(short = 'n', long = "dry-run")]
@@ -100,6 +104,7 @@ fn main() -> color_eyre::Result<()> {
             args.dry_run,
             args.skip_hooks || args.skip_prehook,
             args.skip_hooks || args.skip_posthook,
+            args.environment.as_deref(),
         )?;
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {
