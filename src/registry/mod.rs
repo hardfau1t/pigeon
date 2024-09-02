@@ -1,4 +1,4 @@
-use color_eyre::eyre::{bail, Context};
+use color_eyre::eyre::{bail, Context, eyre};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow, collections::HashMap, marker::PhantomData, ops::Deref, path::Path, rc::Rc,
@@ -455,7 +455,7 @@ impl EndPoint<Substituted> {
         let body = body
             .map(|body| match body.data {
                 BodyData::Inline(d) => Ok((body.kind, d.into_bytes())),
-                BodyData::Path(path) => std::fs::read(path).map(|content| (body.kind, content)),
+                BodyData::Path(path) => std::fs::read(&path).wrap_err_with(||eyre!("Couldn't read file {path:?}")).map(|content| (body.kind, content)),
             })
             .transpose()?;
         let body = body.map(|(kind, body)| {
