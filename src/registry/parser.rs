@@ -1,4 +1,6 @@
+use miette::{bail, ensure, Context, IntoDiagnostic};
 use semver::Version;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -17,16 +19,6 @@ pub enum ConfigError {
     CouldntReadFile(#[from] std::io::Error),
     #[error("Failed to deserialize config file")]
     InvalidConfigFile(#[from] toml::de::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum PopulateError {
-    #[error("Failed to read content of service directory or file : {0:?}")]
-    InvalidServiceDirectoryOrFile(#[from] std::io::Error),
-    #[error("Unexpected file, expecting only toml files: {0:?}")]
-    UnexpectedFile(PathBuf),
-    #[error("Failed to parse file: {0:?}")]
-    ParseError(#[from] toml::de::Error),
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,51 +57,49 @@ impl Config {
         Ok(config)
     }
 
-    pub fn populate(&self) -> Result<HashMap<String, ServiceModule>, PopulateError> {
+    pub fn populate(&self) -> miette::Result<HashMap<String, ServiceModule>> {
         let services = self
             .api_directory
-            .read_dir()?
-            .filter_map(|file| match file {
-                Ok(dir_entry) => {
-                    let ft = match dir_entry.file_type() {
-                        Ok(ft) => ft,
-                        Err(e) => {
-                            warn!(error= ?e, "Failed to get file type, skipping");
-                            return None;
-                        }
+            .read_dir()
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Couldn't read api directory {:?}", self.api_directory))?
+            .map(|file| {
+                let dir_entry = file
+                    .into_diagnostic()
+                    .wrap_err("Failed to read entry of service directory")?;
+                let ft = dir_entry
+                    .file_type()
+                    .into_diagnostic()
+                    .wrap_err("Couldn't evaluate file type")?;
+
+                if ft.is_file() {
+                    trace!(file=?dir_entry.path(), "parsing as file");
+                    let mapped_module = parse_file::<ServiceModule>(&dir_entry.path())?;
+                    Ok(mapped_module)
+                } else if ft.is_dir() {
+                    trace!(file=?dir_entry.path(), "parsing as directory");
+
+                    let Some(module_name) =
+                        dir_entry.file_name().to_str().map(|name| name.to_string())
+                    else {
+                        bail!(
+                            "service name {:?} is not valid utf-8, please change it utf-8 string",
+                            dir_entry.file_name()
+                        );
                     };
-                    let res = if ft.is_file() {
+                    let mapped_module = ServiceModule::from_dir(&dir_entry.path())
+                        .map(|sm| (module_name, sm))
+                        .wrap_err_with(|| format!("Couldn't read directory {:?}", dir_entry))?;
 
-                        trace!(file=?dir_entry.path(), "parsing as file");
-                        ServiceModule::from_file(&dir_entry.path())
-
-                    } else if ft.is_dir() {
-
-                        trace!(file=?dir_entry.path(), "parsing as directory");
-
-                        let Some(module_name) = dir_entry.file_name().to_str().map(|name| name.to_string()) else {
-                            warn!("service name is not valid utf-8, please change it utf-8 string");
-                            return None
-                        };
-                        ServiceModule::from_dir(&dir_entry.path()).map(|sm| (module_name, sm))
-                    } else {
-                        warn!(file=?dir_entry.path(), "direntry is neither file or directory, its not handled yet skipping");
-                        return None;
-
-                    };
-                    match res {
-                            Ok(sm) => Some(sm),
-                            Err(e) => {
-                                warn!(file=?dir_entry.path(), "Failed to parse config file: {e:?}");
-                                None
-                            },
-                        }
+                    Ok(mapped_module)
+                } else {
+                    bail!(
+                        "direntry {:?} is neither file or directory, its not handled yet skipping",
+                        dir_entry.path()
+                    )
                 }
-                Err(e) => {
-                    warn!(error=?e, "Failed to read entry of service directory");
-                    None
-                }
-            }).collect::<HashMap<_, _>>();
+            })
+            .collect::<Result<HashMap<_, _>, _>>()?;
         Ok(services)
     }
 }
@@ -135,67 +125,77 @@ pub struct ServiceModule {
     pub submodules: HashMap<String, SubModule>,
 }
 
+fn parse_file<T: DeserializeOwned>(path_ref: &impl AsRef<Path>) -> miette::Result<(String, T)> {
+    let path = path_ref.as_ref();
+    ensure!(
+        path.extension().is_some_and(|ext| ext == "toml"),
+        "Unexpected non toml file {:?} in services directory",
+        path
+    );
+
+    let content = std::fs::read_to_string(path).into_diagnostic().wrap_err_with(|| format!("couldn't read file content {path:?}"))?;
+    let module_name = path
+        .file_stem()
+        .expect("already checked that there is stem")
+        .to_str()
+        .ok_or_else(|| miette::miette!("Couldn't convert os_str to utf-8 string: {path:?} "))?
+        .to_string();
+    Ok((
+        module_name,
+        toml::from_str::<T>(&content).into_diagnostic().wrap_err_with(|| format!("Couldn't deserialize {path:?}"))?,
+    ))
+}
+
 impl ServiceModule {
-    fn from_file(path_ref: &impl AsRef<Path>) -> Result<(String, Self), PopulateError> {
-        let path = path_ref.as_ref();
-        if path.extension().filter(|ext| *ext == "toml").is_none() {
-            return Err(PopulateError::UnexpectedFile(path.into()));
-        }
-        let content = std::fs::read_to_string(path)?;
-        let module_name = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .ok_or(PopulateError::UnexpectedFile(path.into()))?
-            .to_string();
-        Ok((module_name, toml::from_str::<Self>(&content)?))
-    }
-    fn from_dir(path_ref: &impl AsRef<Path>) -> Result<Self, PopulateError> {
+    fn from_dir(path_ref: &impl AsRef<Path>) -> miette::Result<Self> {
         let mut path_buf: PathBuf = path_ref.as_ref().into();
-        let submodules = path_buf.read_dir()?.filter_map(|dir_entry_res| {
-            let dir_entry = dir_entry_res.ok()?;
-            if dir_entry.file_name() == "index.toml" {
-                // index.toml will be handled separately
-                return None;
-            }
-            match dir_entry.file_type() {
-                Ok(ft) => {
-                    if ft.is_dir() {
-                        match SubModule::from_dir(&dir_entry.path()) {
-                            Ok(sm) => {
-                                let Some(mod_name) = dir_entry.file_name().to_str().map(|s| s.to_string()) else {
-                                    warn!(mod_name=?dir_entry.file_name(), "Failed to convert module name to utf-8 String, currently only utf-8 strings are supported");
-                                    return None
-                                };
-                                Some((mod_name, sm))
-                            }
-                            Err(e) => {
-                                warn!(file=?dir_entry.path(), error=?e , "Failed to get submodule from dir, skipping");
-                                None
-                            }
-                        }
-                    } else if ft.is_file() {
-                        match SubModule::from_file(&dir_entry.path()) {
-                            Ok(sm) => Some(sm),
-                            Err(e) => {
-                                warn!(file=?dir_entry.path(), error=?e, "Failed to get submodule, skipping");
-                                None
-                            }
-                        }
-                    } else {
-                        warn!(file=?dir_entry.file_name(), "Currently {ft:?} is not supported");
-                        None
-                    }
+        let submodules = path_buf
+            .read_dir()
+            .into_diagnostic()?
+            .filter(|dir_entry_res| {
+                // index.toml will be handled separately, skipp that file
+                dir_entry_res
+                    .as_ref()
+                    .is_ok_and(|dir_entry| dir_entry.file_name() != "index.toml")
+            })
+            .map(|dir_entry_res| {
+                // from dir entry if that is file then read it directly else recursively desend and parse inner files
+                let dir_entry = dir_entry_res
+                    .into_diagnostic()
+                    .wrap_err("Couldn't read the directory entry")?;
+                let file_type = dir_entry
+                    .file_type()
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("Couldn't get file type of {dir_entry:?}"))?;
+                if file_type.is_dir() {
+                    let subm = SubModule::from_dir(&dir_entry.path()).wrap_err_with(|| {
+                        format!("Failed to parse submodule from {dir_entry:?}, skipping")
+                    })?;
+                    let mod_name = dir_entry
+                        .file_name()
+                        .to_str()
+                        .map(|s| s.to_string())
+                        .ok_or(miette::miette!(
+                        "file path {dir_entry:?} is not utf-8, non utf-8 paths are not supported"
+                    ))?;
+                    Ok((mod_name, subm))
+                } else if file_type.is_file() {
+                    parse_file::<SubModule>(&dir_entry.path())
+                } else {
+                    bail!("unsupported file type {file_type:?} of {dir_entry:?}")
                 }
-                Err(e) => {
-                    warn!(file=?dir_entry.file_name(),"Failed to get file type for {:?}", e);
-                    None
-                }
-            }
-        });
+            });
         path_buf.push("index.toml");
-        let module_content = std::fs::read_to_string(&path_buf)?;
-        let mut module = toml::from_str::<Self>(&module_content)?;
-        module.submodules.extend(submodules);
+        let module_content = std::fs::read_to_string(&path_buf)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Couldn't read file {:?}", path_buf))?;
+        let mut module = toml::from_str::<Self>(&module_content)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Failed deserialize file {:?}", path_buf))?;
+        for other_subm in submodules {
+            let (name, subm) = other_subm?;
+            module.submodules.insert(name, subm);
+        }
         Ok(module)
     }
 }
@@ -287,9 +287,13 @@ pub struct SubModule {
 }
 
 impl SubModule {
-    fn from_dir(path_ref: &impl AsRef<Path>) -> Result<Self, PopulateError> {
+    fn from_dir(path_ref: &impl AsRef<Path>) -> miette::Result<Self> {
         let mut path_buf: PathBuf = path_ref.as_ref().into();
-        let submodules = path_buf.read_dir()?.filter_map(|dir_entry_res| {
+        let submodules = path_buf
+            .read_dir()
+            .into_diagnostic()
+            .wrap_err_with(||"Couldn't read directory {path_buf:?}")?
+            .filter_map(|dir_entry_res| {
             let dir_entry = dir_entry_res.ok()?;
             if dir_entry.file_name() == "index.toml" {
                 // index.toml will be handled separately
@@ -312,7 +316,7 @@ impl SubModule {
                             }
                         }
                     } else if ft.is_file() {
-                        match SubModule::from_file(&dir_entry.path()) {
+                        match parse_file::<SubModule>(&dir_entry.path()) {
                             Ok(sm) => Some(sm),
                             Err(e) => {
                                 warn!(file=?dir_entry.path(), error=?e, "Failed to get submodule, skipping");
@@ -331,23 +335,12 @@ impl SubModule {
             }
         });
         path_buf.push("index.toml");
-        let module_content = std::fs::read_to_string(&path_buf)?;
-        let mut module = toml::from_str::<Self>(&module_content)?;
+        let module_content = std::fs::read_to_string(&path_buf)
+            .into_diagnostic()
+            .wrap_err_with(|| "Couldn't read file: {path_buf:?}")?;
+        let mut module = toml::from_str::<Self>(&module_content).into_diagnostic().wrap_err_with(|| format!("Couldn't deserialize file: {path_buf:?}"))?;
         module.submodules.extend(submodules);
         Ok(module)
-    }
-    fn from_file(path_ref: &impl AsRef<Path>) -> Result<(String, Self), PopulateError> {
-        let path = path_ref.as_ref();
-        if path.extension().filter(|ext| *ext == "toml").is_none() {
-            return Err(PopulateError::UnexpectedFile(path.into()));
-        }
-        let content = std::fs::read_to_string(path)?;
-        let module_name = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .ok_or(PopulateError::UnexpectedFile(path.into()))?
-            .to_string();
-        Ok((module_name, toml::from_str::<Self>(&content)?))
     }
 
     #[tracing::instrument(skip(self, parent_env_list))]

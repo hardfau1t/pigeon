@@ -1,4 +1,4 @@
-use color_eyre::eyre::{bail, eyre, Context};
+use miette::{bail, Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow, collections::HashMap, marker::PhantomData, ops::Deref, path::Path, rc::Rc,
@@ -21,8 +21,10 @@ pub struct Bundle {
 
 impl Bundle {
     #[instrument(skip(file_path))]
-    pub fn open(file_path: &impl AsRef<Path>) -> Result<Self, color_eyre::Report> {
-        let config = parser::Config::open(file_path)?;
+    pub fn open(file_path: &impl AsRef<Path>) -> miette::Result<Self> {
+        let config = parser::Config::open(file_path)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Failed to gather config from {:?}", file_path.as_ref()))?;
         let service_mods = config.populate()?;
         Ok(Self::build(&config.project, service_mods))
     }
@@ -110,12 +112,14 @@ impl Bundle {
         skip_prehook: bool,
         skip_posthook: bool,
         current_env: Option<&str>,
-    ) -> Result<Option<Vec<u8>>, color_eyre::Report> {
+    ) -> miette::Result<Option<Vec<u8>>> {
         trace!("running query");
         let (Some((endpoint, environments)), _) = self.find(keys) else {
             bail!("couldn't find endpoint with {}", keys.join("."));
         };
-        let mut config_store = Store::with_env(&self.package)?;
+        let mut config_store = Store::with_env(&self.package)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Couldn't read store values of {}", self.package))?;
         debug!("current config: {config_store:?}");
         config_store.persistent(persistent_config);
         let Some(current_env_name) = current_env.or_else(|| {
@@ -147,9 +151,19 @@ impl Bundle {
         });
         let built_endpoint = endpoint
             .substitute(&config_store, &current_env.as_ref().headers)
+            .into_diagnostic()
             .wrap_err("Failed to substitute key values in query")?;
         built_endpoint.execute(
-            current_env.as_ref().try_into()?,
+            current_env
+                .as_ref()
+                .try_into()
+                .into_diagnostic()
+                .wrap_err_with(|| {
+                    format!(
+                        "Couldn't convert current environment {} into url",
+                        current_env
+                    )
+                })?,
             &mut config_store,
             hooks_flags,
             dry_run,
@@ -441,7 +455,7 @@ impl EndPoint<Substituted> {
         dry_run: bool,
         skip_prehook: bool,
         skip_posthook: bool,
-    ) -> color_eyre::Result<Option<Vec<u8>>> {
+    ) -> miette::Result<Option<Vec<u8>>> {
         trace!("executing query");
         let mut flags_iter = flags.split(|flag| flag.borrow() == "--");
         let request_hook_flags = flags_iter.next().unwrap_or(&[]);
@@ -461,7 +475,8 @@ impl EndPoint<Substituted> {
             .map(|body| match body.data {
                 BodyData::Inline(d) => Ok((body.kind, d.into_bytes())),
                 BodyData::Path(path) => std::fs::read(&path)
-                    .wrap_err_with(|| eyre!("Couldn't read file {path:?}"))
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("Couldn't read file {path:?}"))
                     .map(|content| (body.kind, content)),
             })
             .transpose()?;
@@ -491,7 +506,10 @@ impl EndPoint<Substituted> {
             })
             .unwrap_or(request_object);
         let body = mapped_request_obj.body.take();
-        let request = mapped_request_obj.into_request(base_url)?;
+        let request = mapped_request_obj
+            .into_request(base_url)
+            .into_diagnostic()
+            .wrap_err("failed to create request object")?;
         info!("Query {} {}", request.method(), request.url());
         info!("headers:\n{}", {
             let mut headers = request.header_names();
