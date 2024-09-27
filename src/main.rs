@@ -94,7 +94,9 @@ fn main() -> miette::Result<()> {
         services.view(&args.endpoint);
     } else if args.json {
         let stdout = std::io::stdout();
-        serde_json::to_writer(stdout, &services).into_diagnostic().wrap_err("Couldn't write serialized service map")?;
+        serde_json::to_writer(stdout, &services)
+            .into_diagnostic()
+            .wrap_err("Couldn't write serialized service map")?;
     } else {
         let response_body = services.run(
             &args.endpoint,
@@ -107,11 +109,13 @@ fn main() -> miette::Result<()> {
         )?;
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {
-                std::fs::write(&output_file, body).into_diagnostic()
+                std::fs::write(&output_file, body)
+                    .into_diagnostic()
                     .wrap_err_with(|| format!("Failed to write response body to {output_file:?}"))?
             } else {
                 std::io::stdout()
-                    .write_all(&body).into_diagnostic()
+                    .write_all(&body)
+                    .into_diagnostic()
                     .wrap_err("Failed to write body to stdout")?
             }
         }

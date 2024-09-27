@@ -133,7 +133,9 @@ fn parse_file<T: DeserializeOwned>(path_ref: &impl AsRef<Path>) -> miette::Resul
         path
     );
 
-    let content = std::fs::read_to_string(path).into_diagnostic().wrap_err_with(|| format!("couldn't read file content {path:?}"))?;
+    let content = std::fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("couldn't read file content {path:?}"))?;
     let module_name = path
         .file_stem()
         .expect("already checked that there is stem")
@@ -142,7 +144,9 @@ fn parse_file<T: DeserializeOwned>(path_ref: &impl AsRef<Path>) -> miette::Resul
         .to_string();
     Ok((
         module_name,
-        toml::from_str::<T>(&content).into_diagnostic().wrap_err_with(|| format!("Couldn't deserialize {path:?}"))?,
+        toml::from_str::<T>(&content)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Couldn't deserialize {path:?}"))?,
     ))
 }
 
@@ -338,7 +342,9 @@ impl SubModule {
         let module_content = std::fs::read_to_string(&path_buf)
             .into_diagnostic()
             .wrap_err_with(|| "Couldn't read file: {path_buf:?}")?;
-        let mut module = toml::from_str::<Self>(&module_content).into_diagnostic().wrap_err_with(|| format!("Couldn't deserialize file: {path_buf:?}"))?;
+        let mut module = toml::from_str::<Self>(&module_content)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Couldn't deserialize file: {path_buf:?}"))?;
         module.submodules.extend(submodules);
         Ok(module)
     }
