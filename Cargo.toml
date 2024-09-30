@@ -1,12 +1,12 @@
 [package]
-name = "pigeon"
+name = "yoink"
 version = "0.4.0"
 edition = "2021"
 description = "http query management tool for commandline lovers"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/hardfau1t/pigeon"
-homepage = "https://github.com/hardfau1t/pigeon"
-documentation = "https://docs.rs/pigeon/latest/pigeon/"
+repository = "https://github.com/hardfau1t/yoink"
+homepage = "https://github.com/hardfau1t/yoink"
+documentation = "https://docs.rs/yoink/latest/yoink/"
 
 [dependencies]
 clap = { version = "4.4.18", features = ["derive"] }

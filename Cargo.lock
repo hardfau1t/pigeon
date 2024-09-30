@@ -505,29 +505,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
-name = "pigeon"
-version = "0.4.0"
-dependencies = [
- "clap",
- "dirs",
- "http",
- "miette",
- "rmp-serde",
- "rmpv",
- "semver",
- "serde",
- "serde_json",
- "subst",
- "thiserror",
- "toml",
- "tracing",
- "tracing-subscriber",
- "tracing-test",
- "ureq",
- "url",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1294,6 +1271,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59b5e5f6c299a3c7890b876a2a587f3115162487e704907d9b6cd29473052ba1"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "yoink"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "dirs",
+ "http",
+ "miette",
+ "rmp-serde",
+ "rmpv",
+ "semver",
+ "serde",
+ "serde_json",
+ "subst",
+ "thiserror",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-test",
+ "ureq",
+ "url",
 ]
 
 [[package]]
