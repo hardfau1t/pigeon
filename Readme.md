@@ -1,4 +1,4 @@
-## Yoink
+## Pigeon
 
 A tool for managing and executing HTTP queries via shell. The main aim of the tool is to easily script queries and run them effortlessly in the shell.
 
@@ -12,7 +12,7 @@ You can find list of other tools [here]()
 
 ## Configuration
 
-`Yoink` will look for `yoink.toml` file in current directory. If you have it in separate place use `-c` flag to indicate location of the file.
+`pigeon` will look for `pigeon.toml` file in current directory. If you have it in separate place use `-c` flag to indicate location of the file.
 
 Structure of the file looks like below
 ```toml
@@ -168,7 +168,7 @@ Note: whatever is written to stdout is considered as output and gets deserialize
 
 #### Configuration Store
 
-For every project one config store file is created. For linux it is in `$XDG_CACHE_DIR/Yoink/<project>`.
+For every project one config store file is created. For linux it is in `$XDG_CACHE_DIR/pigeon/<project>`.
 Its a simple key value pair of strings and these will be used for substitution. Scripts/hooks can set these values
 in their return object
 

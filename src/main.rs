@@ -18,7 +18,7 @@ struct Arguments {
     #[arg(short, long, global=true, action=clap::ArgAction::Count)]
     verbose: u8,
     /// configuration file containing queries
-    #[arg(short, long, default_value = "./yoink.toml")]
+    #[arg(short, long, default_value = "./pigeon.toml")]
     config_file: std::path::PathBuf,
     /// don't store changes to config store back to disk
     #[arg(short('p'), long("no-persistent"))]
