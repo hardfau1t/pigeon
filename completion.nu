@@ -12,7 +12,7 @@ def endpoint-path [context: string] {
 
         let half_completed_flag = if $half_completed  { $ep_path_params | last } else { "" }
 
-        let services = (^pigeon -j | from json | get services)
+        let services = (^pigeon --list-json | from json | get services)
 
         $complete_params
             | reduce -f {submodules: $services, endpoints: {} } {|next_path, acc|

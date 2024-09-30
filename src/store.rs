@@ -6,6 +6,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use miette::Diagnostic;
 use tracing::{debug, error, instrument, trace, warn};
 
 /// Main interface for managing variables
@@ -17,7 +18,7 @@ pub struct Store {
     used_with_env: bool,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Diagnostic)]
 pub enum StoreError {
     #[error("XdgCache path is missing from the system")]
     XdgCacheMissing,

@@ -1,5 +1,7 @@
+mod agent;
 mod constants;
-mod registry;
+mod hook;
+mod parser;
 mod store;
 
 use std::io::Write;
@@ -8,8 +10,6 @@ use clap::Parser;
 use miette::{Context, IntoDiagnostic};
 use tracing::debug;
 use tracing_subscriber::filter::LevelFilter;
-
-use registry::Bundle;
 
 #[derive(Debug, clap::Parser)]
 #[command(author, version, about)]
@@ -27,6 +27,33 @@ struct Arguments {
     // write output to given file
     #[arg(short, long)]
     output: Option<std::path::PathBuf>,
+
+    // Take the input body from given file
+    // - will read from std in
+    #[arg(short, long)]
+    input: Option<std::path::PathBuf>,
+
+    /// content-type of the data.
+    /// if the services has `kind` then that has higher priority.
+    /// This should be used with `input` and `kind` is not set in services
+    #[arg(
+        short = 't',
+        long,
+        default_value = "text/plain",
+        default_value_if(
+            "content_type_json",
+            clap::builder::ArgPredicate::IsPresent,
+            "application/json"
+        ),
+        requires("input")
+    )]
+    content_type: String,
+
+    /// set content-type to json
+    /// alias to -t "application/json"
+    #[arg(long = "json")]
+    content_type_json: bool,
+
     /// list available options (services/endpoints)
     #[arg(short, long)]
     list: bool,
@@ -53,10 +80,10 @@ struct Arguments {
     skip_posthook: bool,
 
     /// output collected services as json output
-    #[arg(short, long, conflicts_with_all(["list", "endpoint"]))]
-    json: bool,
+    #[arg(long("list-json"), conflicts_with_all(["list", "endpoint"]))]
+    list_json: bool,
 
-    #[arg(required_unless_present_any(["list", "json"]))]
+    #[arg(required_unless_present_any(["list", "list_json"]))]
     endpoint: Vec<String>,
     /// arguments for hooks, note to make it unamgious add -- before providing any flags
     /// add another -- separator to separate between prehook flags and post hook flags
@@ -85,20 +112,22 @@ fn main() -> miette::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     debug!("Log level set to : {log_level:?}");
+
     debug!(extra_args=?args.args, "Arguments for the scripts");
 
-    let services = Bundle::open(&args.config_file)?;
+    let services = parser::Bundle::open(&args.config_file)?;
     debug!(services=?services, "parsed services");
 
     if args.list {
         services.view(&args.endpoint);
-    } else if args.json {
+    } else if args.list_json {
         let stdout = std::io::stdout();
         serde_json::to_writer(stdout, &services)
             .into_diagnostic()
             .wrap_err("Couldn't write serialized service map")?;
     } else {
-        let response_body = services.run(
+        let response_body = crate::agent::run(
+            &services,
             &args.endpoint,
             &args.args,
             !args.no_persistent,

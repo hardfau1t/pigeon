@@ -1,15 +1,16 @@
 use miette::{bail, ensure, Context, IntoDiagnostic};
 use semver::Version;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::{collections::HashMap, rc::Rc};
-use tracing::{debug, error, trace, warn};
-
-use super::{Environment, Module};
-
-type EndPoint = super::EndPoint<super::NotSubstituted>;
+use serde::{de::DeserializeOwned, Serialize};
+use std::ops::Deref;
+use std::{
+    collections::HashMap,
+    marker::PhantomData,
+    path::{Path, PathBuf},
+    rc::Rc,
+    str::FromStr,
+};
+use tracing::{debug, error, instrument, trace, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -57,7 +58,7 @@ impl Config {
         Ok(config)
     }
 
-    pub fn populate(&self) -> miette::Result<HashMap<String, ServiceModule>> {
+    pub fn populate(&self) -> miette::Result<HashMap<String, ServiceBuilder>> {
         let services = self
             .api_directory
             .read_dir()
@@ -74,7 +75,7 @@ impl Config {
 
                 if ft.is_file() {
                     trace!(file=?dir_entry.path(), "parsing as file");
-                    let mapped_module = parse_file::<ServiceModule>(&dir_entry.path())?;
+                    let mapped_module = parse_file::<ServiceBuilder>(&dir_entry.path())?;
                     Ok(mapped_module)
                 } else if ft.is_dir() {
                     trace!(file=?dir_entry.path(), "parsing as directory");
@@ -87,7 +88,7 @@ impl Config {
                             dir_entry.file_name()
                         );
                     };
-                    let mapped_module = ServiceModule::from_dir(&dir_entry.path())
+                    let mapped_module = ServiceBuilder::from_dir(&dir_entry.path())
                         .map(|sm| (module_name, sm))
                         .wrap_err_with(|| format!("Couldn't read directory {:?}", dir_entry))?;
 
@@ -104,9 +105,142 @@ impl Config {
     }
 }
 
+/// Set of Services
+#[derive(Debug, Serialize)]
+pub struct Bundle {
+    pub services: HashMap<String, Service>,
+    pub package: String,
+}
+
+impl Bundle {
+    #[instrument(skip(file_path))]
+    pub fn open(file_path: &impl AsRef<Path>) -> miette::Result<Self> {
+        let config = Config::open(file_path)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Failed to gather config from {:?}", file_path.as_ref()))?;
+        let service_mods = config.populate()?;
+        Ok(Self::build(&config.project, service_mods))
+    }
+
+    /// finds endpoint or module pointed by series of keys
+    ///
+    /// * `keys`: list of keys pointing to endpoint or another submodule
+    ///
+    /// # returns
+    /// 1. Optional endpoint with set of environments it contains
+    /// 2. Optional submodule with given path
+    #[instrument(skip(keys))]
+    pub fn find(
+        &self,
+        keys: &[impl std::borrow::Borrow<str>],
+    ) -> (
+        Option<(&RawEndpoint, &HashMap<String, Rc<Environment>>)>,
+        Option<&Service>,
+    ) {
+        let mut key_iterator = keys.iter();
+        let Some(service_name) = key_iterator.next() else {
+            return (None, None);
+        };
+        // first key should be service and should exist
+        let Some(root_service) = self.services.get(service_name.borrow()) else {
+            error!(
+                service = service_name.borrow(),
+                "Couldn't find given service"
+            );
+            return (None, None);
+        };
+        let Ok((endpoint, last_service)) = key_iterator.try_fold(
+            (None, Some(root_service)),
+            |(_endpoints, current_service), key| {
+                if let Some(sub_service) = current_service {
+                    Ok(sub_service.get(&key.borrow()))
+                } else {
+                    debug!(key = key.borrow(), "Failed to find");
+                    Err(())
+                }
+            },
+        ) else {
+            error!("Couldn't find given service or endpoint");
+            return (None, None);
+        };
+        (endpoint, last_service)
+    }
+
+    #[instrument(skip(keys))]
+    pub fn view<T: std::borrow::Borrow<str>>(&self, keys: &[T]) {
+        let Some(last_key) = keys.last().map(|l| l.borrow()) else {
+            // the list is empty so show only list of services
+            eprintln!("Available services: {:#?}", self.services.keys());
+            return;
+        };
+        let (endpoint, last_service) = self.find(keys);
+        if let Some((endpoint, environ)) = endpoint {
+            eprintln!("======== {} ======\n{}", last_key, endpoint);
+            eprintln!("Environments:");
+            environ.iter().for_each(|(env_name, env)| {
+                eprintln!(
+                    "\t{env_name}: {}\n\t\theaders: {:?}",
+                    env.as_ref(),
+                    env.headers
+                )
+            });
+        }
+        if let Some(service) = last_service {
+            eprintln!("====== {last_key} ======\n{service}");
+        }
+    }
+
+    fn build(
+        package: &impl std::borrow::Borrow<str>,
+        service_mods: HashMap<String, ServiceBuilder>,
+    ) -> Self {
+        let inner = service_mods
+            .into_iter()
+            .map(|(name, service_mod)| {
+                let module = {
+                    let ServiceBuilder {
+                        environments: service_mod_environments,
+                        endpoints,
+                        submodules,
+                        alias,
+                        description,
+                    } = service_mod;
+                    let environments = service_mod_environments
+                        .into_iter()
+                        .map(|(name, environ)| (name, Rc::new(environ)))
+                        .collect::<HashMap<_, _>>();
+
+                    let submodules = submodules
+                        .into_iter()
+                        .map(|(name, sub_mod)| {
+                            let module = sub_mod.into_module(&environments);
+                            (name, module)
+                        })
+                        .collect();
+
+                    Service {
+                        environments,
+                        endpoints,
+                        submodules,
+                        alias,
+                        description,
+                    }
+                };
+                (name, module)
+            })
+            .collect::<HashMap<String, Service>>();
+        Self {
+            services: inner,
+            package: package.borrow().to_string(),
+        }
+    }
+}
+
+type RawEndpoint = EndPoint<NotSubstituted>;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ServiceModule {
+pub struct ServiceBuilder {
     #[serde(default)]
     pub alias: Option<String>,
 
@@ -118,11 +252,143 @@ pub struct ServiceModule {
 
     #[serde(default)]
     #[serde(rename = "endpoint")]
-    pub endpoints: HashMap<String, EndPoint>,
+    pub endpoints: HashMap<String, RawEndpoint>,
 
     #[serde(default)]
     #[serde(rename = "submodule")]
     pub submodules: HashMap<String, SubModule>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Service {
+    alias: Option<String>,
+    description: Option<String>,
+    environments: HashMap<String, std::rc::Rc<Environment>>,
+    endpoints: HashMap<String, RawEndpoint>,
+    submodules: HashMap<String, Self>,
+}
+
+impl Service {
+    fn get(
+        &self,
+        key: &impl AsRef<str>,
+    ) -> (
+        Option<(&RawEndpoint, &HashMap<String, Rc<Environment>>)>,
+        Option<&Self>,
+    ) {
+        let key = key.as_ref();
+        let ep = self.endpoints.get(key).map(|ep| (ep, &self.environments));
+        let subm = self.submodules.get(key);
+
+        (ep, subm)
+    }
+}
+
+impl std::fmt::Display for Service {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(alias) = &self.alias {
+            writeln!(f, "alias: {alias}")?;
+        }
+        if let Some(description) = &self.description {
+            writeln!(f, "description: {description}")?;
+        }
+        writeln!(f, "environments:")?;
+        for (env_name, environ) in &self.environments {
+            writeln!(f, "\t* {env_name}: {}", environ.as_ref())?
+        }
+        if !self.endpoints.is_empty() {
+            writeln!(f, "endpoints:")?;
+            for (ep_name, ep) in &self.endpoints {
+                write!(f, "\t- {ep_name}")?;
+                if let Some(alias) = &ep.alias {
+                    writeln!(f, " ({alias})")?;
+                } else {
+                    writeln!(f)?;
+                }
+            }
+        }
+        if !self.submodules.is_empty() {
+            writeln!(f, "submodules:")?;
+            for sub_mod in self.submodules.keys() {
+                writeln!(f, "\t- {sub_mod}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Environment {
+    #[serde(with = "serde_scheme")]
+    pub scheme: http::uri::Scheme,
+    pub host: String,
+    pub port: Option<u16>,
+    // this will be applied to path of endpoint
+    pub prefix: Option<String>,
+    // common headers which are applied to each query
+    // headers in query has more priority than this
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub store: HashMap<String, String>,
+}
+
+impl std::fmt::Display for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}://{}{}/{}",
+            self.scheme,
+            self.host,
+            self.port
+                .map(|port| format!(":{}", port))
+                .unwrap_or("".to_string()),
+            self.prefix.as_deref().unwrap_or(""),
+        )
+    }
+}
+
+impl TryInto<url::Url> for &Environment {
+    type Error = url::ParseError;
+
+    fn try_into(self) -> Result<url::Url, Self::Error> {
+        let port_str = if let Some(port) = self.port {
+            format!(":{port}")
+        } else {
+            "".to_string()
+        };
+        url::Url::from_str(&format!(
+            "{}://{}{}/{}/",
+            self.scheme.as_str(),
+            self.host,
+            port_str,
+            self.prefix
+                .as_deref()
+                .map(|prefix| prefix.trim_matches('/'))
+                .unwrap_or("")
+        ))
+    }
+}
+
+mod serde_scheme {
+    use serde::{Deserialize, Serializer};
+
+    pub(super) fn serialize<S>(scheme: &http::uri::Scheme, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(scheme.as_str())
+    }
+    /// deserialization function for uri scheme
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<http::uri::Scheme, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let str_val = String::deserialize(deserializer)?;
+        <http::uri::Scheme as std::str::FromStr>::from_str(&str_val)
+            .map_err(|e| serde::de::Error::custom(format!("Failed to parse uri: {e:?}")))
+    }
 }
 
 fn parse_file<T: DeserializeOwned>(path_ref: &impl AsRef<Path>) -> miette::Result<(String, T)> {
@@ -150,7 +416,7 @@ fn parse_file<T: DeserializeOwned>(path_ref: &impl AsRef<Path>) -> miette::Resul
     ))
 }
 
-impl ServiceModule {
+impl ServiceBuilder {
     fn from_dir(path_ref: &impl AsRef<Path>) -> miette::Result<Self> {
         let mut path_buf: PathBuf = path_ref.as_ref().into();
         let submodules = path_buf
@@ -285,7 +551,7 @@ pub struct SubModule {
     environments: HashMap<String, EnvironmentBuilder>,
     #[serde(default)]
     #[serde(rename = "endpoint")]
-    endpoints: HashMap<String, EndPoint>,
+    endpoints: HashMap<String, RawEndpoint>,
     #[serde(default)]
     submodules: HashMap<String, Self>,
 }
@@ -350,7 +616,7 @@ impl SubModule {
     }
 
     #[tracing::instrument(skip(self, parent_env_list))]
-    pub fn into_module(self, parent_env_list: &HashMap<String, Rc<Environment>>) -> Module {
+    pub fn into_module(self, parent_env_list: &HashMap<String, Rc<Environment>>) -> Service {
         debug!("converting submodule: {self:?} to module with env {parent_env_list:?}");
         let SubModule {
             environments: sub_mod_environs,
@@ -392,8 +658,8 @@ impl SubModule {
         let submodules = submodules
             .into_iter()
             .map(|(name, sub_mod)| (name, sub_mod.into_module(&environments)))
-            .collect::<HashMap<String, Module>>();
-        Module {
+            .collect::<HashMap<String, Service>>();
+        Service {
             environments,
             endpoints,
             submodules,
@@ -401,4 +667,154 @@ impl SubModule {
             description,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct Substituted;
+#[derive(Debug)]
+pub struct NotSubstituted;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndPoint<T> {
+    pub description: Option<String>,
+    pub alias: Option<String>,
+    pub method: Method,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub params: Vec<(String, String)>,
+    pub body: Option<Body>,
+    pub pre_hook: Option<crate::hook::Hook>,
+    pub post_hook: Option<crate::hook::Hook>,
+    pub path: String,
+    #[serde(skip)]
+    _t: PhantomData<T>,
+}
+
+impl<T> std::fmt::Display for EndPoint<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{} {}", self.method, self.path)?;
+        if let Some(ref desc) = self.description {
+            writeln!(f, "{desc}.")?
+        }
+        if let Some(ref alias) = self.alias {
+            writeln!(f, "alias: {alias}")?
+        }
+        if !self.params.is_empty() {
+            writeln!(f, "params: {:?}", self.params)?
+        }
+        if !self.headers.is_empty() {
+            writeln!(f, "headers:")?;
+            self.headers
+                .iter()
+                .try_fold((), |_, (header_name, header_values)| {
+                    //format!()
+                    writeln!(f, "\t{header_name}: {header_values:?}")?;
+                    Ok(())
+                })?;
+        }
+        if let Some(ref body) = self.body {
+            writeln!(f, "body:\n{body:?}")?
+        }
+        Ok(())
+    }
+}
+impl EndPoint<NotSubstituted> {
+    #[instrument(skip(self, config_store))]
+    pub fn substitute(
+        &self,
+        config_store: &crate::store::Store,
+        base_headers: &HashMap<String, String>,
+    ) -> Result<EndPoint<Substituted>, subst::Error> {
+        trace!("Constructing query by substing values from config_store");
+        let key_val_store = config_store.deref();
+
+        // substitute url
+        let url_path = subst::substitute(&self.path, key_val_store)?;
+
+        // substitute url
+        let mut params = Vec::with_capacity(self.params.len());
+        for (key, val) in &self.params {
+            let key = subst::substitute(key, key_val_store)?;
+            let val = subst::substitute(val, key_val_store)?;
+            params.push((key, val))
+        }
+
+        // substitute headers
+        let mut headers = HashMap::with_capacity(self.headers.len());
+        for (key, value) in base_headers
+            .iter()
+            // only take keys from base which are not present in self headers
+            .filter(|(key, _)| !self.headers.contains_key(key.as_str()))
+            .chain(&self.headers)
+        {
+            let values_subst = subst::substitute(value, key_val_store)?;
+            let key = subst::substitute(key, key_val_store)?;
+            headers.insert(key, values_subst);
+        }
+        Ok(EndPoint::<Substituted> {
+            description: self.description.clone(),
+            alias: self.alias.clone(),
+            method: self.method,
+            headers,
+            params,
+            body: self.body.clone(),
+            pre_hook: self.pre_hook.clone(),
+            post_hook: self.post_hook.clone(),
+            path: url_path,
+            _t: PhantomData,
+        })
+    }
+}
+
+///
+/// Http Methods
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
+pub enum Method {
+    Get,
+    Post,
+    Put,
+    Delete,
+    Head,
+    Options,
+    Connect,
+    Patch,
+    Trace,
+}
+
+impl std::fmt::Display for Method {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str_repr = match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+            Method::Head => "HEAD",
+            Method::Options => "OPTIONS",
+            Method::Connect => "CONNECT",
+            Method::Patch => "PATCH",
+            Method::Trace => "TRACE",
+        };
+        f.write_str(str_repr)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Body {
+    pub kind: String,
+    #[serde(flatten)]
+    pub data: BodyData,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
+pub enum BodyData {
+    #[serde(rename = "data")]
+    Inline(String),
+    #[serde(rename = "file")]
+    Path(std::path::PathBuf),
 }
