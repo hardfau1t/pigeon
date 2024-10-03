@@ -4,7 +4,7 @@ use crate::{
 };
 use miette::{bail, Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Borrow, collections::HashMap, ops::Deref};
+use std::{borrow::Borrow, collections::HashMap, io::Read, ops::Deref};
 use tracing::{debug, info, instrument, trace, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -91,6 +91,7 @@ pub fn execute(
     dry_run: bool,
     skip_prehook: bool,
     skip_posthook: bool,
+    input_file: Option<&std::path::Path>,
 ) -> miette::Result<Option<Vec<u8>>> {
     trace!("executing query");
     let mut flags_iter = flags.split(|flag| flag.borrow() == "--");
@@ -108,12 +109,28 @@ pub fn execute(
     } = end_point;
 
     let body = body
-        .map(|body| match body.data {
-            BodyData::Inline(d) => Ok((body.kind, d.into_bytes())),
-            BodyData::Path(path) => std::fs::read(&path)
+        .map(|body| {
+            if let Some(path_override) = input_file {
+                // read from either stdin or file
+                if path_override == (AsRef::<std::path::Path>::as_ref("-")) {
+                    let mut buf = Vec::<u8>::new();
+                    std::io::stdin().read_to_end(&mut buf).map(|_| buf)
+                } else {
+                    std::fs::read(path_override)
+                }
+                // map the errors
                 .into_diagnostic()
-                .wrap_err_with(|| format!("Couldn't read file {path:?}"))
-                .map(|content| (body.kind, content)),
+                .wrap_err_with(|| format!("Couldn't read file {path_override:?}"))
+                .map(|content| (body.kind, content))
+            } else {
+                match body.data {
+                    BodyData::Inline(d) => Ok((body.kind, d.into_bytes())),
+                    BodyData::Path(path) => std::fs::read(&path)
+                        .into_diagnostic()
+                        .wrap_err_with(|| format!("Couldn't read file {path:?}"))
+                        .map(|content| (body.kind, content)),
+                }
+            }
         })
         .transpose()?;
     let body = body.map(|(kind, body)| {
@@ -236,6 +253,7 @@ pub fn run<T: std::borrow::Borrow<str> + std::fmt::Debug>(
     skip_prehook: bool,
     skip_posthook: bool,
     current_env: Option<&str>,
+    input_file: Option<&std::path::Path>,
 ) -> miette::Result<Option<Vec<u8>>> {
     trace!("running query");
     let (Some((endpoint, environments)), _) = bundle.find(keys) else {
@@ -294,5 +312,6 @@ pub fn run<T: std::borrow::Borrow<str> + std::fmt::Debug>(
         dry_run,
         skip_prehook,
         skip_posthook,
+        input_file,
     )
 }

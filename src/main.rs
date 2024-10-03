@@ -135,6 +135,7 @@ fn main() -> miette::Result<()> {
             args.skip_hooks || args.skip_prehook,
             args.skip_hooks || args.skip_posthook,
             args.environment.as_deref(),
+            args.input.as_deref()
         )?;
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {

@@ -129,7 +129,6 @@ impl Bundle {
     /// # returns
     /// 1. Optional endpoint with set of environments it contains
     /// 2. Optional submodule with given path
-    #[instrument(skip(keys))]
     pub fn find(
         &self,
         keys: &[impl std::borrow::Borrow<str>],
