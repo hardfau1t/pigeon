@@ -295,7 +295,7 @@ pub fn run<T: std::borrow::Borrow<str> + std::fmt::Debug>(
         .substitute(&config_store, &current_env.as_ref().headers)
         .into_diagnostic()
         .wrap_err("Failed to substitute key values in query")?;
-    crate::agent::execute(
+    execute(
         built_endpoint,
         current_env
             .as_ref()
