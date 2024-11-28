@@ -20,24 +20,27 @@ struct RequestHookObject {
     config: HashMap<String, String>,
 }
 
+struct A {
+    f1: u32,
+    f2: u8,
+}
+
+struct B<T = A> {
+    f3: T,
+    f4: T,
+}
+
 impl RequestHookObject {
-    fn into_request(self, base_url: url::Url) -> Result<ureq::Request, url::ParseError> {
+    fn into_request(self, base_url: url::Url) -> Result<reqwest::RequestBuilder, url::ParseError> {
         let path = self.path.as_str().trim_start_matches('/');
         let url = base_url.join(path)?;
-        let request = ureq::request(&self.method.to_string(), url.as_str());
+        let client = reqwest::Client::new();
+        let request = client
+            .request(self.method.into(), url.as_str())
+            .headers((&self.headers).try_into().expect("invalid headers"))
+            .query(&self.params);
 
         // add headers
-        let request = self
-            .headers
-            .iter()
-            .fold(request, |request, (key, value)| {
-                request.set(key.as_str(), value.as_str())
-            })
-            .query_pairs(
-                self.params
-                    .iter()
-                    .map(|(key, val)| (key.as_str(), val.as_str())),
-            );
         Ok(request)
     }
 }
@@ -54,36 +57,38 @@ struct ResponseHookObject {
 }
 
 impl ResponseHookObject {
-    fn from_response(response: ureq::Response, config: HashMap<String, String>) -> Self {
-        let mut body = Vec::new();
-        let header_keys = response.headers_names();
-        let status = response.status();
-        let status_text = response.status_text().to_string();
-        let headers: HashMap<_, _> = header_keys
+    async fn from_response(response: reqwest::Response, config: HashMap<String, String>) -> Self {
+        let headers = response
+            .headers()
             .into_iter()
-            .map(|header_name| {
-                let vals = response
-                    .all(&header_name)
-                    .iter()
-                    .map(|val_ref| val_ref.to_string())
-                    .collect();
-                (header_name, vals)
+            .map(|(key, val)| {
+                (
+                    key.to_string(),
+                    val.to_str()
+                        .expect("woah non utf-8 header value, request for this feature")
+                        .to_string(),
+                )
             })
             .collect();
-        if let Err(e) = response.into_reader().read_to_end(&mut body) {
-            warn!("Error while reading response body: {e}, truncate body");
-            body.clear();
+        let status = response.status();
+        let status_text = status.to_string();
+        let body = match response.bytes().await {
+            Ok(bytes) => Some(bytes.to_vec()),
+            Err(e) => {
+                warn!("Error while reading response body: {e}, truncate body");
+                None
+            }
         };
         ResponseHookObject {
             headers,
-            body: Some(body),
-            status,
+            body,
+            status: status.as_u16(),
             status_text,
             config,
         }
     }
 }
-pub fn execute(
+pub async fn execute(
     end_point: EndPoint<Substituted>,
     base_url: url::Url,
     config_store: &mut Store,
@@ -158,27 +163,23 @@ pub fn execute(
             obj
         })
         .unwrap_or(request_object);
+    // info print request
+    info!("Query {} {}", mapped_request_obj.method, base_url);
+    info!("headers:\n");
+    mapped_request_obj
+        .headers
+        .iter()
+        .for_each(|(key, value)| info!("> {key}: {value}"));
+
     let body = mapped_request_obj.body.take();
+
     let request = mapped_request_obj
         .into_request(base_url)
         .into_diagnostic()
         .wrap_err("failed to create request object")?;
-    info!("Query {} {}", request.method(), request.url());
-    info!("headers:\n{}", {
-        let mut headers = request.header_names();
-        headers.dedup();
-        headers
-            .iter()
-            .map(|key| {
-                let value = request.all(key).join(",");
-                format!("> {key}: {value}")
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    });
 
     // generate request object
-    let resp = if let Some(body) = body {
+    let request = if let Some(body) = body {
         match std::str::from_utf8(body.as_slice()) {
             Ok(str_body) => info!("request body: '{str_body}'"),
             Err(e) => {
@@ -186,32 +187,21 @@ pub fn execute(
                 info!("request body: {body:x?}");
             }
         }
-        if dry_run {
-            return Ok(None);
-        }
-        request.send_bytes(body.as_slice())
+        request.body(body)
     } else {
-        if dry_run {
-            return Ok(None);
-        }
-
-        request.call()
+        request
     };
+    if dry_run {
+        return Ok(None);
+    }
+    let resp = request.send().await;
     let response = match resp {
         Ok(ok_val) => ok_val,
-        Err(e) => match e {
-            ureq::Error::Status(code, response) => {
-                warn!("Request Failed with code: {code}");
-                response
-            }
-            ureq::Error::Transport(e) => {
-                bail!("Transport error occurred during processing of request: {e}")
-            }
-        },
+        Err(e) => bail!("Transport error occurred during processing of request: {e}"),
     };
 
     let post_hook_obj: ResponseHookObject =
-        ResponseHookObject::from_response(response, config_store.deref().deref().clone());
+        ResponseHookObject::from_response(response, config_store.deref().deref().clone()).await;
     // display response
     info!(
         "response status: {} {}",
@@ -244,7 +234,7 @@ pub fn execute(
 /// * `flags`: flags for hooks `--` will separate flags into pre-hook and post-hook flags
 /// * `persistent_config`: whether to store changes to config back
 #[instrument(skip(hooks_flags, bundle))]
-pub fn run<T: std::borrow::Borrow<str> + std::fmt::Debug>(
+pub async fn run<T: std::borrow::Borrow<str> + std::fmt::Debug>(
     bundle: &Bundle,
     keys: &[T],
     hooks_flags: &[impl std::borrow::Borrow<str>],
@@ -313,5 +303,5 @@ pub fn run<T: std::borrow::Borrow<str> + std::fmt::Debug>(
         skip_prehook,
         skip_posthook,
         input_file,
-    )
+    ).await
 }

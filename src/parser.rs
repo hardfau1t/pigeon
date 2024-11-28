@@ -801,6 +801,24 @@ impl std::fmt::Display for Method {
     }
 }
 
+
+impl From<Method> for reqwest::Method {
+    fn from(value: Method) -> Self {
+        match value{
+            Method::Get => reqwest::Method::GET,
+            Method::Post => reqwest::Method::POST,
+            Method::Put => reqwest::Method::PUT,
+            Method::Delete => reqwest::Method::DELETE,
+            Method::Head => reqwest::Method::HEAD,
+            Method::Options => reqwest::Method::OPTIONS,
+            Method::Connect => reqwest::Method::CONNECT,
+            Method::Patch => reqwest::Method::PATCH,
+            Method::Trace => reqwest::Method::TRACE,
+        }
+    }
+}
+
+
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Body {

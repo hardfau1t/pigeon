@@ -91,7 +91,8 @@ struct Arguments {
     args: Vec<String>,
 }
 
-fn main() -> miette::Result<()> {
+#[tokio::main]
+async fn main() -> miette::Result<()> {
     let args = Arguments::parse();
     let log_level = match args.verbose {
         0 => LevelFilter::WARN,
@@ -136,7 +137,7 @@ fn main() -> miette::Result<()> {
             args.skip_hooks || args.skip_posthook,
             args.environment.as_deref(),
             args.input.as_deref(),
-        )?;
+        ).await?;
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {
                 std::fs::write(&output_file, body)
