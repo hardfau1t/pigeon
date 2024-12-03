@@ -1,5 +1,5 @@
 use crate::{
-    parser::{BodyData, Bundle, EndPoint, Substituted},
+    parser::{BodyData, Bundle, EndPoint, FormValue, Substituted},
     store::Store,
 };
 use miette::{bail, Context, IntoDiagnostic};
@@ -14,20 +14,11 @@ struct RequestHookObject {
     #[serde(default)]
     params: Vec<(String, String)>,
     body: Option<Vec<u8>>,
+    multipart: Option<HashMap<String, FormValue>>,
     path: String,
     method: crate::parser::Method,
     #[serde(default)]
     config: HashMap<String, String>,
-}
-
-struct A {
-    f1: u32,
-    f2: u8,
-}
-
-struct B<T = A> {
-    f3: T,
-    f4: T,
 }
 
 impl RequestHookObject {
@@ -110,6 +101,7 @@ pub async fn execute(
         pre_hook,
         post_hook,
         path,
+        multipart,
         ..
     } = end_point;
 
@@ -148,6 +140,7 @@ pub async fn execute(
         body,
         path,
         method,
+        multipart,
         // HACK: I couldn't figure out how to send reference of hashmap to sereialize and take hashmap from deserialize
         config: config_store.deref().deref().clone(),
     };
@@ -172,7 +165,7 @@ pub async fn execute(
         .for_each(|(key, value)| info!("> {key}: {value}"));
 
     let body = mapped_request_obj.body.take();
-
+    let multipart_opt = mapped_request_obj.multipart.take();
     let request = mapped_request_obj
         .into_request(base_url)
         .into_diagnostic()
@@ -188,6 +181,34 @@ pub async fn execute(
             }
         }
         request.body(body)
+    } else {
+        request
+    };
+
+    // get multipart body
+    let request = if let Some(multipart) = multipart_opt {
+        multipart
+            .into_iter()
+            .try_fold(request, |prev_builder, (key, form_part)| {
+                // read the text or file
+                let part = match form_part {
+                    FormValue::Text(t) => reqwest::multipart::Part::text(t),
+                    FormValue::File(path_buf) => {
+                        let content = std::fs::read(&path_buf)
+                            .into_diagnostic()
+                            .wrap_err_with(|| format!("couldn't read {path_buf:?}"))?;
+                        let file_name = path_buf
+                            .file_name()
+                            .ok_or(miette::miette!("Couldn't get file name"))?
+                            .to_str()
+                            .ok_or(miette::miette!("file name is not valid utf-8 string"))?;
+                        reqwest::multipart::Part::bytes(content).file_name(file_name.to_string())
+                    }
+                };
+                let form = reqwest::multipart::Form::new().part(key, part);
+                Result::<reqwest::RequestBuilder, miette::Error>::Ok(prev_builder.multipart(form))
+            })
+            .wrap_err("couldn't generate multipart form request")?
     } else {
         request
     };
@@ -303,5 +324,6 @@ pub async fn run<T: std::borrow::Borrow<str> + std::fmt::Debug>(
         skip_prehook,
         skip_posthook,
         input_file,
-    ).await
+    )
+    .await
 }

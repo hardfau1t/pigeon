@@ -3,6 +3,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{borrow::Borrow, io::Write, os::unix::process::ExitStatusExt};
 use tracing::{debug, error, instrument, trace};
 
+// TODO: add Hook executor which takes arguments like executor which executes given script
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 #[serde(rename_all = "snake_case")]

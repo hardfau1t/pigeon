@@ -673,6 +673,33 @@ pub struct Substituted;
 #[derive(Debug)]
 pub struct NotSubstituted;
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub enum FormValue {
+    Text(String),
+    File(std::path::PathBuf),
+}
+
+impl std::fmt::Display for FormValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FormValue::Text(text) => write!(f, "{text}"),
+            FormValue::File(file_path) => {
+                let Ok(content) = std::fs::read(file_path) else {
+                    return write!(f, "Couldn't read {file_path:?}");
+                };
+                match std::str::from_utf8(&content) {
+                    Ok(s_content) => write!(f, "{s_content}"),
+                    Err(e) => {
+                        warn!("couldn't decode {file_path:?} as utf-8 str, {e}");
+                        write!(f, "{:?}", content.as_slice())
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndPoint<T> {
@@ -684,6 +711,7 @@ pub struct EndPoint<T> {
     #[serde(default)]
     pub params: Vec<(String, String)>,
     pub body: Option<Body>,
+    pub multipart: Option<HashMap<String, FormValue>>,
     pub pre_hook: Option<crate::hook::Hook>,
     pub post_hook: Option<crate::hook::Hook>,
     pub path: String,
@@ -762,6 +790,7 @@ impl EndPoint<NotSubstituted> {
             pre_hook: self.pre_hook.clone(),
             post_hook: self.post_hook.clone(),
             path: url_path,
+            multipart: self.multipart.clone(),
             _t: PhantomData,
         })
     }
@@ -801,10 +830,9 @@ impl std::fmt::Display for Method {
     }
 }
 
-
 impl From<Method> for reqwest::Method {
     fn from(value: Method) -> Self {
-        match value{
+        match value {
             Method::Get => reqwest::Method::GET,
             Method::Post => reqwest::Method::POST,
             Method::Put => reqwest::Method::PUT,
@@ -817,7 +845,6 @@ impl From<Method> for reqwest::Method {
         }
     }
 }
-
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
