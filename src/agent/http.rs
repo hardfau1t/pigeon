@@ -22,10 +22,13 @@ struct RequestHookObject {
 }
 
 impl RequestHookObject {
-    fn into_request(self, base_url: url::Url) -> Result<reqwest::RequestBuilder, url::ParseError> {
+    fn into_request(
+        self,
+        base_url: url::Url,
+        client: &mut reqwest::Client,
+    ) -> Result<reqwest::RequestBuilder, url::ParseError> {
         let path = self.path.as_str().trim_start_matches('/');
         let url = base_url.join(path)?;
-        let client = reqwest::Client::new();
         let request = client
             .request(self.method.into(), url.as_str())
             .headers((&self.headers).try_into().expect("invalid headers"))
@@ -156,18 +159,12 @@ pub async fn execute(
             obj
         })
         .unwrap_or(request_object);
-    // info print request
-    info!("Query {} {}", mapped_request_obj.method, base_url);
-    info!("headers:\n");
-    mapped_request_obj
-        .headers
-        .iter()
-        .for_each(|(key, value)| info!("> {key}: {value}"));
 
     let body = mapped_request_obj.body.take();
     let multipart_opt = mapped_request_obj.multipart.take();
+    let mut client = reqwest::Client::new();
     let request = mapped_request_obj
-        .into_request(base_url)
+        .into_request(base_url, &mut client)
         .into_diagnostic()
         .wrap_err("failed to create request object")?;
 
@@ -212,10 +209,27 @@ pub async fn execute(
     } else {
         request
     };
+
+    let request = request
+        .build()
+        .into_diagnostic()
+        .wrap_err("Couldn't build request")?;
+
+    // info print request
+    info!("Query {} {}", request.method(), request.url());
+    info!("headers:\n");
+    request
+        .headers()
+        .iter()
+        .for_each(|(key, value)| info!("> {key}: {value:?}"));
+    if let Some(body) = request.body() {
+        info!("Body: {body:?}")
+    }
+
     if dry_run {
         return Ok(None);
     }
-    let resp = request.send().await;
+    let resp = client.execute(request).await;
     let response = match resp {
         Ok(ok_val) => ok_val,
         Err(e) => bail!("Transport error occurred during processing of request: {e}"),
