@@ -27,7 +27,7 @@ impl RequestHookObject {
         base_url: url::Url,
         client: &mut reqwest::Client,
     ) -> Result<reqwest::RequestBuilder, url::ParseError> {
-        let path = self.path.as_str().trim_start_matches('/');
+        let path = self.path.as_str();
         let url = base_url.join(path)?;
         let request = client
             .request(self.method.into(), url.as_str())
@@ -239,7 +239,7 @@ pub async fn execute(
         ResponseHookObject::from_response(response, config_store.deref().deref().clone()).await;
     // display response
     info!(
-        "response status: {} {}",
+        "response status: {} '{}'",
         post_hook_obj.status, post_hook_obj.status_text
     );
 

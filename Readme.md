@@ -57,7 +57,8 @@ description = "<desc>"  # Optional description for given module
 scheme = "https|http"
 host = "<ip address/hostname>"
 port = 80           # Its an optional field can range from 0-65535
-prefix = "/prefix"  # Optional prefix which will be applied to all endpoints path under this module/submodule
+# joining of this prefix and the path is handled according to this [url.join](https://docs.rs/url/2.5.4/url/struct.Url.html#method.join)
+prefix = "/prefix"  # Optional prefix which will be applied to all endpoints path under this module/submodule,
 headers = {}        # Optional Map of headers which will be applied to all endpoints, headers in endpoints can override these values
 [environment.<name>.store] # Optional map containing key value pair for substitutions
 key = "value"

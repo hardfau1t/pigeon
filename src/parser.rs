@@ -364,7 +364,7 @@ impl TryInto<url::Url> for &Environment {
             port_str,
             self.prefix
                 .as_deref()
-                .map(|prefix| prefix.trim_matches('/'))
+                .map(|prefix| prefix.trim_start_matches('/'))
                 .unwrap_or("")
         ))
     }
