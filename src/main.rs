@@ -2,6 +2,7 @@ mod agent;
 mod constants;
 mod hook;
 mod parser;
+mod parser2;
 mod store;
 
 use std::io::Write;
@@ -116,16 +117,22 @@ async fn main() -> miette::Result<()> {
 
     debug!(extra_args=?args.args, "Arguments for the scripts");
 
-    let services = parser::Bundle::open(&args.config_file)?;
-    debug!(services=?services, "parsed services");
+    let config = parser2::Config::open(&args.config_file)?;
+
+    let groups = parser2::Group::from_dir(config.api_directory)?;
+
+    debug!(query_set=?groups, "parsed services");
 
     if args.list {
-        services.view(&args.endpoint);
+        let query_set = groups
+            .find(&args.endpoint)
+            .ok_or_else(|| miette::miette!("no such query or group found"))?;
+        if args.list_json {
+            query_set.json_print();
+        } else {
+            query_set.format_print();
+        }
     } else if args.list_json {
-        let stdout = std::io::stdout();
-        serde_json::to_writer(stdout, &services)
-            .into_diagnostic()
-            .wrap_err("Couldn't write serialized service map")?;
     } else {
         let response_body = crate::agent::http::run(
             &services,
@@ -137,7 +144,8 @@ async fn main() -> miette::Result<()> {
             args.skip_hooks || args.skip_posthook,
             args.environment.as_deref(),
             args.input.as_deref(),
-        ).await?;
+        )
+        .await?;
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {
                 std::fs::write(&output_file, body)
