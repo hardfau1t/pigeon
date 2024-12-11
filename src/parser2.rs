@@ -93,15 +93,20 @@ impl Group {
         let subgroups = group_entries
             .into_iter()
             .map(|file| {
-                file.file_name()
+                let name = file
+                    .path()
+                    .file_stem()
+                    .unwrap_or(file.file_name().as_os_str())
                     .to_str()
                     .ok_or(miette::miette!(
                         "Invalid utf-8 file name: {:?}",
                         file.file_name()
-                    ))
-                    .and_then(|name| Self::from_path(file.path()).map(|e| (name.to_string(), e)))
+                    ))?
+                    .to_string();
+                let subg = Self::from_path(file.path())?;
+                miette::Result::Ok((name, subg))
             })
-            .collect::<Result<HashMap<_, _>, _>>()
+            .collect::<Result<HashMap<_, _>, miette::Error>>()
             .wrap_err("Couldn't read group")?;
 
         group.group.extend(subgroups);
