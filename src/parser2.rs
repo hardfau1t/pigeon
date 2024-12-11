@@ -135,12 +135,13 @@ impl Group {
         }
     }
 
-    /// find given query from the tree
+    /// find given query/group from the tree
     pub fn find<'a, 's>(
         &'a self,
         search_path: &'s [impl AsRef<str>],
     ) -> Option<SearchResult<'a, 's>> {
         let Some((key, rest)) = search_path.split_first() else {
+            debug!("empty search query, showing top level groups");
             return Some(SearchResult {
                 name: None,
                 sub_query: None,
@@ -152,20 +153,27 @@ impl Group {
         };
 
         if rest.is_empty() {
+            trace!("finding group/query {}", key.as_ref());
             let sub_query = self.query.get(key.as_ref()).map(|q| QuerySearchResult {
                 query: q,
                 environments: self.environment.clone(),
             });
-            let sub_group = Some(GroupSearchResult {
-                queries: &self.query,
-                groups: &self.group,
+            let sub_group = self.group.get(key.as_ref()).map(|g| GroupSearchResult {
+                queries: &g.query,
+                groups: &g.group,
             });
+
+            if sub_query.is_none() && sub_group.is_none() {
+                warn!("no such group/query: {}", key.as_ref());
+                return None;
+            }
             Some(SearchResult {
                 name: Some(key.as_ref()),
                 sub_query,
                 sub_group,
             })
         } else {
+            trace!("finding group with name {}", key.as_ref());
             // if there are no subgroup but query still has params then search is invalid so return None
             let sub_group = self.group.get(key.as_ref())?;
 
