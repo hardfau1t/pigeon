@@ -136,9 +136,13 @@ impl Group {
     }
 
     /// find given query from the tree
-    pub fn find<'a>(&'a self, search_path: &[impl AsRef<str>]) -> Option<SearchResult<'a>> {
+    pub fn find<'a, 's>(
+        &'a self,
+        search_path: &'s [impl AsRef<str>],
+    ) -> Option<SearchResult<'a, 's>> {
         let Some((key, rest)) = search_path.split_first() else {
             return Some(SearchResult {
+                name: None,
                 sub_query: None,
                 sub_group: Some(GroupSearchResult {
                     queries: &self.query,
@@ -157,6 +161,7 @@ impl Group {
                 groups: &self.group,
             });
             Some(SearchResult {
+                name: Some(key.as_ref()),
                 sub_query,
                 sub_group,
             })
@@ -180,15 +185,45 @@ enum Environment {
     Rest(agent::http2::RestEnvironment),
 }
 
+impl std::fmt::Display for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
 #[derive(Debug, Deserialize, Hash, PartialEq, Eq, Clone, Serialize)]
 enum Query {
     Rest(agent::http2::Query),
+}
+
+impl std::fmt::Display for Query {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub struct QuerySearchResult<'g> {
     environments: HashMap<String, Environment>,
     query: &'g Query,
+}
+
+impl<'g> QuerySearchResult<'g> {
+    fn format_print(&self) {
+        eprintln!("{}", self.query);
+        eprintln!("Available environments:\n");
+        let mut table = comfy_table::Table::new();
+        table
+            .load_preset(comfy_table::presets::UTF8_FULL)
+            .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
+        table.set_header(["name", "description"]);
+        let rows = self.environments.iter().map(|(name, env)| {
+            let desc = env.to_string();
+            [name.clone(), desc]
+        });
+        table.add_rows(rows);
+        eprintln!("{table}");
+    }
 }
 
 /// set of environments and query result
@@ -201,14 +236,51 @@ pub struct GroupSearchResult<'g> {
 }
 
 #[derive(Debug, Serialize)]
-pub struct SearchResult<'g> {
+pub struct SearchResult<'g, 'i> {
+    name: Option<&'i str>,
     sub_query: Option<QuerySearchResult<'g>>,
     sub_group: Option<GroupSearchResult<'g>>,
 }
 
-impl<'g> SearchResult<'g> {
-    pub fn format_print(&self) -> miette::Result<()> {
-        todo!()
+impl<'g, 'i> SearchResult<'g, 'i> {
+    pub fn format_print(&'i self) {
+        if let Some(query) = &self.sub_query {
+            let name = self.name.expect("name cannot be None for matched query");
+            eprintln!("Query: {name}\n");
+            query.format_print();
+        };
+        if let Some(group) = &self.sub_group {
+            if !group.groups.is_empty() {
+                let mut subg_table = comfy_table::Table::new();
+                subg_table
+                    .load_preset(comfy_table::presets::UTF8_FULL)
+                    .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
+
+                let sub_group_names = group.groups.keys().map(|name| [name]);
+                if let Some(name) = self.name {
+                    subg_table.set_header([format!("{name} sub_groups")]);
+                } else {
+                    subg_table.set_header(["sub_groups"]);
+                }
+                subg_table.add_rows(sub_group_names);
+                eprintln!("{subg_table}");
+            }
+
+            if !group.queries.is_empty() {
+                let mut subq_table = comfy_table::Table::new();
+                subq_table
+                    .load_preset(comfy_table::presets::UTF8_FULL)
+                    .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
+                let sub_query_names = group.queries.keys().map(|name| [name]);
+                if let Some(name) = self.name {
+                    subq_table.set_header([format!("{name} sub_groups")]);
+                } else {
+                    subq_table.set_header(["sub_groups"]);
+                }
+                subq_table.add_rows(sub_query_names);
+                eprintln!("{subq_table}");
+            }
+        }
     }
 
     pub fn json_print(&self) -> miette::Result<()> {

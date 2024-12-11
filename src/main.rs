@@ -123,17 +123,17 @@ async fn main() -> miette::Result<()> {
 
     debug!(query_set=?groups, "parsed services");
 
-    if args.list {
+    if args.list || args.list_json {
         let query_set = groups
             .find(&args.endpoint)
             .ok_or_else(|| miette::miette!("no such query or group found"))?;
         if args.list_json {
-            query_set.json_print();
+            query_set.json_print()?;
         } else {
             query_set.format_print();
         }
-    } else if args.list_json {
     } else {
+        /*
         let response_body = crate::agent::http::run(
             &services,
             &args.endpoint,
@@ -158,6 +158,7 @@ async fn main() -> miette::Result<()> {
                     .wrap_err("Failed to write body to stdout")?
             }
         }
+        */
     }
     Ok(())
 }
