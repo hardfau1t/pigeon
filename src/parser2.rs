@@ -92,6 +92,14 @@ impl Group {
 
         let subgroups = group_entries
             .into_iter()
+            .filter(|entry| {
+                if !entry.path().ends_with("toml") {
+                    true
+                } else {
+                    warn!("ignoring non toml file: {:?}", entry.path());
+                    false
+                }
+            })
             .map(|file| {
                 let name = file
                     .path()
