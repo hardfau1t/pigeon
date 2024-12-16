@@ -171,10 +171,10 @@ impl Group {
                 query: q,
                 environments: self.environment.clone(),
             });
-            let sub_group = self.group.get(key.as_ref()).map(|g| GroupSearchResult {
-                queries: &g.query,
-                groups: &g.group,
-            });
+            let sub_group = self
+                .group
+                .get(key.as_ref())
+                .map(|g| GroupSearchResult::from(g));
 
             if sub_query.is_none() && sub_group.is_none() {
                 warn!("no such group/query: {}", key.as_ref());
@@ -193,8 +193,16 @@ impl Group {
             // if one of the subgroup finds None then popout that None
             let mut qset = sub_group.find(rest)?;
             if let Some(q) = &mut qset.sub_query {
-                // if the search result has query then append my environments also to list of environments so that later it can be squashed
-                q.environments.extend(self.environment.clone());
+                self.environment.iter().for_each(|(key, parent_env)| {
+                    q.environments
+                        .entry(key.to_owned())
+                        .and_modify(|cur_env|  // if the current env is not empty then just apply missing fields from parent env
+                            if let Err(e) = cur_env.apply(parent_env) {
+                                debug!(parent=?parent_env, self=?cur_env, "Skipping merge of environment: {e}");
+                            }
+                        )
+                        .or_insert_with(|| parent_env.clone()); // there is no such env so just copy parent env
+                });
             };
             Some(qset)
         }
@@ -204,6 +212,20 @@ impl Group {
 #[derive(Debug, Deserialize, Hash, PartialEq, Eq, Clone, Serialize)]
 enum Environment {
     Rest(agent::http2::RestEnvironment),
+}
+
+impl Environment {
+    fn apply(&mut self, other: &Self) -> miette::Result<()> {
+        match (self, other) {
+            (Environment::Rest(cur_env), Environment::Rest(parent_env)) => {
+                cur_env.apply(parent_env)
+            }
+            _ => {
+                miette::bail!("Incompatible parent env")
+            }
+        };
+        Ok(())
+    }
 }
 
 impl std::fmt::Display for Environment {
@@ -254,6 +276,15 @@ pub struct GroupSearchResult<'g> {
     /// search result can optionally contain a group
     groups: &'g HashMap<String, Group>,
     queries: &'g HashMap<String, Query>,
+}
+
+impl<'g> From<&'g Group> for GroupSearchResult<'g> {
+    fn from(value: &'g Group) -> Self {
+        Self {
+            groups: &value.group,
+            queries: &value.query,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
