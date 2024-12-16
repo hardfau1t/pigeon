@@ -81,7 +81,7 @@ struct Arguments {
     skip_posthook: bool,
 
     /// output collected services as json output
-    #[arg(long("list-json"), conflicts_with_all(["list", "endpoint"]))]
+    #[arg(long("list-json"), conflicts_with("list"))]
     list_json: bool,
 
     #[arg(required_unless_present_any(["list", "list_json"]))]
