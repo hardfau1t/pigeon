@@ -63,12 +63,12 @@ pub trait Handler<'a> {
 
 #[derive(Debug, Deserialize, Default, PartialEq, Eq, Clone, Serialize)]
 pub struct Group {
-    #[serde(default)]
-    environment: HashMap<String, Environment>,
-    #[serde(default)]
-    group: HashMap<String, Group>,
-    #[serde(default)]
-    query: HashMap<String, Query>,
+    #[serde(default, rename="environment")]
+    environments: HashMap<String, Environment>,
+    #[serde(default, rename="group")]
+    groups: HashMap<String, Group>,
+    #[serde(default, rename="query")]
+    queries: HashMap<String, Query>,
 }
 
 impl Group {
@@ -117,7 +117,7 @@ impl Group {
             .collect::<Result<HashMap<_, _>, miette::Error>>()
             .wrap_err("Couldn't read group")?;
 
-        group.group.extend(subgroups);
+        group.groups.extend(subgroups);
 
         Ok(group)
     }
@@ -159,20 +159,20 @@ impl Group {
                 name: None,
                 sub_query: None,
                 sub_group: Some(GroupSearchResult {
-                    queries: &self.query,
-                    groups: &self.group,
+                    queries: &self.queries,
+                    groups: &self.groups,
                 }),
             });
         };
 
         if rest.is_empty() {
             trace!("finding group/query {}", key.as_ref());
-            let sub_query = self.query.get(key.as_ref()).map(|q| QuerySearchResult {
+            let sub_query = self.queries.get(key.as_ref()).map(|q| QuerySearchResult {
                 query: q,
-                environments: self.environment.clone(),
+                environments: self.environments.clone(),
             });
             let sub_group = self
-                .group
+                .groups
                 .get(key.as_ref())
                 .map(|g| GroupSearchResult::from(g));
 
@@ -188,12 +188,12 @@ impl Group {
         } else {
             trace!("finding group with name {}", key.as_ref());
             // if there are no subgroup but query still has params then search is invalid so return None
-            let sub_group = self.group.get(key.as_ref())?;
+            let sub_group = self.groups.get(key.as_ref())?;
 
             // if one of the subgroup finds None then popout that None
             let mut qset = sub_group.find(rest)?;
             if let Some(q) = &mut qset.sub_query {
-                self.environment.iter().for_each(|(key, parent_env)| {
+                self.environments.iter().for_each(|(key, parent_env)| {
                     q.environments
                         .entry(key.to_owned())
                         .and_modify(|cur_env|  // if the current env is not empty then just apply missing fields from parent env
@@ -210,6 +210,7 @@ impl Group {
 }
 
 #[derive(Debug, Deserialize, Hash, PartialEq, Eq, Clone, Serialize)]
+#[serde(rename_all="snake_case", tag="type")]
 enum Environment {
     Rest(agent::http2::RestEnvironment),
 }
@@ -281,8 +282,8 @@ pub struct GroupSearchResult<'g> {
 impl<'g> From<&'g Group> for GroupSearchResult<'g> {
     fn from(value: &'g Group) -> Self {
         Self {
-            groups: &value.group,
-            queries: &value.query,
+            groups: &value.groups,
+            queries: &value.queries,
         }
     }
 }
