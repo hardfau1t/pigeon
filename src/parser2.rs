@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use yansi::Paint;
 use miette::{Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tracing::{debug, error, trace, warn};
+use yansi::Paint;
 
 use crate::{agent, constants};
 
@@ -50,12 +50,12 @@ impl Config {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum GroupInfo {
     Http {
-        #[serde(default)]
+        #[serde(default, rename = "query")]
         queries: HashMap<String, agent::http2::Query>,
-        #[serde(default)]
+        #[serde(default, rename = "environment")]
         environments: HashMap<String, agent::http2::Environment>,
     },
     Generic,
@@ -77,7 +77,7 @@ impl GroupInfo {
             GroupInfo::Generic => None,
         }
     }
-    fn format_print(&self) {
+    fn format_print(&self, my_name: &Option<impl std::fmt::Debug>) {
         match self {
             GroupInfo::Http { queries, .. } => {
                 if !queries.is_empty() {
@@ -111,6 +111,7 @@ impl Default for GroupInfo {
 pub struct Group {
     #[serde(default, rename = "group")]
     sub_groups: HashMap<String, Group>,
+    // TODO: This will cause error if the file doesn't have `type`, eventhough default it is generic
     #[serde(flatten)]
     info: GroupInfo,
 }
@@ -301,6 +302,7 @@ impl<'g> QuerySearchResult<'g> {
                     .iter()
                     .map(|(name, e)| [name.clone()].into_iter().chain(e.into_row().into_iter()));
                 table.add_rows(rows);
+                eprintln!("{table}");
             }
         }
     }
@@ -339,8 +341,6 @@ impl<'g> GroupSearchResult<'g> {
             subg_table.add_rows(subg_rows);
             eprintln!("{subg_table}");
         }
-
-        self.queries.format_print();
     }
 }
 
@@ -375,6 +375,7 @@ impl<'g, 'i> SearchResult<'g, 'i> {
                 }
                 group.format_print()
             }
+            group.queries.format_print(&self.name);
         }
     }
 
@@ -383,6 +384,38 @@ impl<'g, 'i> SearchResult<'g, 'i> {
         serde_json::to_writer(stdout, self)
             .into_diagnostic()
             .wrap_err("Couldn't write serialized Search results")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn group_deserialize_empty_generic() {
+        let s = "";
+        let g: Group = toml::from_str(s).unwrap();
+        assert_eq!(
+            g,
+            Group {
+                sub_groups: HashMap::new(),
+                info: GroupInfo::Generic
+            }
+        )
+    }
+    #[test]
+    fn group_deserialize_empty_http() {
+        let s = "type = \"http\"";
+        let g: Group = toml::from_str(s).unwrap();
+        assert_eq!(
+            g,
+            Group {
+                sub_groups: HashMap::new(),
+                info: GroupInfo::Http {
+                    queries: HashMap::new(),
+                    environments: HashMap::new()
+                }
+            }
+        )
     }
 }
 

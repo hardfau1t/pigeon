@@ -1,18 +1,7 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Default, PartialEq, Eq, Clone, Serialize)]
-pub struct Group {
-    #[serde(default, rename = "environment")]
-    environments: HashMap<String, Environment>,
-    #[serde(default, rename = "group")]
-    groups: HashMap<String, Group>,
-    #[serde(default, rename = "query")]
-    queries: HashMap<String, Query>,
-}
-
 #[derive(Debug, Deserialize, Hash, PartialEq, Eq, Clone, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Environment {
     scheme: Option<String>,
     host: Option<String>,
@@ -44,7 +33,12 @@ impl Environment {
 }
 
 #[derive(Debug, Deserialize, Hash, PartialEq, Eq, Clone, Serialize)]
-pub struct Query {}
+#[serde(deny_unknown_fields)]
+pub struct Query {
+    description: Option<String>,
+    path: String,
+    method: String,
+}
 
 impl std::fmt::Display for Query {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -56,11 +50,11 @@ impl Query {
     /// Gives columns presennt in this structure
     /// this is used for formatting
     pub fn headers() -> &'static [&'static str] {
-        &[]
+        &["method", "path"]
     }
 
     /// gives vec of cells, used for format printing queries
     pub fn into_row(&self) -> Vec<String> {
-        vec![]
+        vec![self.method.clone(), self.path.clone()]
     }
 }

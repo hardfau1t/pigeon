@@ -127,6 +127,7 @@ async fn main() -> miette::Result<()> {
         let query_set = groups
             .find(&args.endpoint)
             .ok_or_else(|| miette::miette!("no such query or group found"))?;
+        debug!(found=?query_set, "found query/group");
         if args.list_json {
             query_set.json_print()?;
         } else {
