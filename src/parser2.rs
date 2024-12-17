@@ -82,7 +82,11 @@ impl GroupInfo {
             GroupInfo::Http { queries, .. } => {
                 if !queries.is_empty() {
                     let mut subq_table = default_table_structure();
-                    eprintln!("Sub Queries");
+                    if let Some(name) = my_name {
+                        eprintln!("{:?} Sub Queries", name.bold().green().bright());
+                    } else {
+                        eprintln!("Sub Queries");
+                    }
                     let query_headers = agent::http2::Query::headers();
                     let headers = ["name"].iter().chain(query_headers);
                     subq_table.set_header(headers);
@@ -363,13 +367,13 @@ impl<'g, 'i> SearchResult<'g, 'i> {
     pub fn format_print(&'i self) {
         if let Some(query) = &self.sub_query {
             let name = self.name.expect("name cannot be None for matched query");
-            eprintln!("Query: {}\n", name.green().bold().bright());
+            eprintln!("Query: \"{}\"", name.green().bold().bright());
             query.format_print();
         };
         if let Some(group) = &self.sub_group {
             if !group.sub_groups.is_empty() {
                 if let Some(name) = self.name {
-                    eprintln!("{} Sub Groups", name.green().bold().bright());
+                    eprintln!("\"{}\" Sub Groups", name.green().bold().bright());
                 } else {
                     eprintln!("Sub Groups");
                 }

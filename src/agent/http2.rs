@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use yansi::Paint;
 
 #[derive(Debug, Deserialize, Hash, PartialEq, Eq, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -42,7 +43,12 @@ pub struct Query {
 
 impl std::fmt::Display for Query {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        static KEY_STYLE: yansi::Style = yansi::Color::Yellow.bold();
+        if let Some(description) = &self.description {
+            writeln!(f, "{}: {}", "description".paint(KEY_STYLE), description)?;
+        }
+        writeln!(f, "{}: {}", "method".paint(KEY_STYLE), self.method)?;
+        writeln!(f, "{}: {}", "path".paint(KEY_STYLE), self.path)
     }
 }
 
