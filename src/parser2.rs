@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-
+use yansi::Paint;
 use miette::{Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, trace, warn};
@@ -363,13 +363,13 @@ impl<'g, 'i> SearchResult<'g, 'i> {
     pub fn format_print(&'i self) {
         if let Some(query) = &self.sub_query {
             let name = self.name.expect("name cannot be None for matched query");
-            eprintln!("Query: {name}\n");
+            eprintln!("Query: {}\n", name.green().bold().bright());
             query.format_print();
         };
         if let Some(group) = &self.sub_group {
             if !group.sub_groups.is_empty() {
                 if let Some(name) = self.name {
-                    eprintln!("{name} Sub Groups");
+                    eprintln!("{} Sub Groups", name.green().bold().bright());
                 } else {
                     eprintln!("Sub Groups");
                 }
