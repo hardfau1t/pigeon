@@ -50,18 +50,21 @@ impl Config {
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Serialize)]
-enum GroupKind {
+#[serde(tag = "type", rename_all = "snake_case")]
+enum GroupInfo {
     Http {
+        #[serde(default)]
         queries: HashMap<String, agent::http2::Query>,
+        #[serde(default)]
         environments: HashMap<String, agent::http2::Environment>,
     },
     Generic,
 }
 
-impl GroupKind {
+impl GroupInfo {
     fn find_query(&self, name: &str) -> Option<QuerySearchResult> {
         match self {
-            GroupKind::Http {
+            GroupInfo::Http {
                 queries,
                 environments,
             } => {
@@ -71,32 +74,34 @@ impl GroupKind {
                     query: q,
                 })
             }
-            GroupKind::Generic => None,
+            GroupInfo::Generic => None,
         }
     }
     fn format_print(&self) {
         match self {
-            GroupKind::Http { queries, .. } => {
-                let mut subq_table = default_table_structure();
-                eprintln!("Sub Queries");
-                let query_headers = agent::http2::Query::headers();
-                let headers = ["name"].iter().chain(query_headers);
-                subq_table.set_header(headers);
+            GroupInfo::Http { queries, .. } => {
+                if !queries.is_empty() {
+                    let mut subq_table = default_table_structure();
+                    eprintln!("Sub Queries");
+                    let query_headers = agent::http2::Query::headers();
+                    let headers = ["name"].iter().chain(query_headers);
+                    subq_table.set_header(headers);
 
-                let query_rows = queries.iter().map(|(name, query)| {
-                    [name.clone()]
-                        .into_iter()
-                        .chain(query.into_row().into_iter())
-                });
-                subq_table.add_rows(query_rows);
-                eprintln!("{subq_table}");
+                    let query_rows = queries.iter().map(|(name, query)| {
+                        [name.clone()]
+                            .into_iter()
+                            .chain(query.into_row().into_iter())
+                    });
+                    subq_table.add_rows(query_rows);
+                    eprintln!("{subq_table}");
+                }
             }
-            GroupKind::Generic => todo!(),
+            GroupInfo::Generic => todo!(),
         }
     }
 }
 
-impl Default for GroupKind {
+impl Default for GroupInfo {
     fn default() -> Self {
         Self::Generic
     }
@@ -106,7 +111,8 @@ impl Default for GroupKind {
 pub struct Group {
     #[serde(default, rename = "group")]
     sub_groups: HashMap<String, Group>,
-    info: GroupKind,
+    #[serde(flatten)]
+    info: GroupInfo,
 }
 
 impl Group {
@@ -198,7 +204,7 @@ impl Group {
                 sub_query: None,
                 sub_group: Some(GroupSearchResult {
                     queries: &self.info,
-                    groups: &self.sub_groups,
+                    sub_groups: &self.sub_groups,
                 }),
             });
         };
@@ -239,10 +245,10 @@ impl Group {
     }
     fn into_row(&self) -> Vec<String> {
         match &self.info {
-            GroupKind::Http { .. } => {
+            GroupInfo::Http { .. } => {
                 vec!["http".to_string()]
             }
-            GroupKind::Generic => vec!["generic".to_string()],
+            GroupInfo::Generic => vec!["generic".to_string()],
         }
     }
 }
@@ -256,11 +262,11 @@ pub enum QuerySearchResult<'g> {
 }
 
 impl<'g> QuerySearchResult<'g> {
-    fn apply_group_env(&mut self, group: &GroupKind) {
+    fn apply_group_env(&mut self, group: &GroupInfo) {
         match (self, group) {
             (
                 QuerySearchResult::Http { environments, .. },
-                GroupKind::Http {
+                GroupInfo::Http {
                     environments: parent_env,
                     ..
                 },
@@ -272,7 +278,7 @@ impl<'g> QuerySearchResult<'g> {
                         .or_insert_with(|| parent_env.clone()); // there is no such env so just copy parent env
                 });
             }
-            (_, GroupKind::Generic) => debug!("parent group is generic group, ignoring"),
+            (_, GroupInfo::Generic) => debug!("parent group is generic group, ignoring"),
         }
     }
 
@@ -305,14 +311,14 @@ impl<'g> QuerySearchResult<'g> {
 #[derive(Debug, Serialize)]
 pub struct GroupSearchResult<'g> {
     /// search result can optionally contain a group
-    groups: &'g HashMap<String, Group>,
-    queries: &'g GroupKind,
+    sub_groups: &'g HashMap<String, Group>,
+    queries: &'g GroupInfo,
 }
 
 impl<'g> From<&'g Group> for GroupSearchResult<'g> {
     fn from(value: &'g Group) -> Self {
         Self {
-            groups: &value.sub_groups,
+            sub_groups: &value.sub_groups,
             queries: &value.info,
         }
     }
@@ -320,14 +326,14 @@ impl<'g> From<&'g Group> for GroupSearchResult<'g> {
 
 impl<'g> GroupSearchResult<'g> {
     fn format_print(&self) {
-        if !self.groups.is_empty() {
+        if !self.sub_groups.is_empty() {
             let mut subg_table = default_table_structure();
 
             let headers = ["name"].iter().chain(Group::headers().iter());
             subg_table.set_header(headers);
 
             let subg_rows = self
-                .groups
+                .sub_groups
                 .iter()
                 .map(|(name, subg)| [name.clone()].into_iter().chain(subg.into_row()));
             subg_table.add_rows(subg_rows);
@@ -361,12 +367,14 @@ impl<'g, 'i> SearchResult<'g, 'i> {
             query.format_print();
         };
         if let Some(group) = &self.sub_group {
-            if let Some(name) = self.name {
-                eprintln!("{name} sub_groups");
-            } else {
-                eprintln!("sub_groups");
+            if !group.sub_groups.is_empty() {
+                if let Some(name) = self.name {
+                    eprintln!("{name} Sub Groups");
+                } else {
+                    eprintln!("Sub Groups");
+                }
+                group.format_print()
             }
-            group.format_print()
         }
     }
 
