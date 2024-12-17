@@ -49,48 +49,86 @@ impl Config {
     }
 }
 
-pub trait Handler<'a> {
-    type Environment;
-    type Query;
-    type Error;
-    type Output;
-    fn handle(
-        &self,
-        env: Self::Environment,
-        query: Self::Query,
-    ) -> Result<Self::Output, Self::Error>;
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Serialize)]
+enum GroupKind {
+    Http {
+        queries: HashMap<String, agent::http2::Query>,
+        environments: HashMap<String, agent::http2::Environment>,
+    },
+    Generic,
+}
+
+impl GroupKind {
+    fn find_query(&self, name: &str) -> Option<QuerySearchResult> {
+        match self {
+            GroupKind::Http {
+                queries,
+                environments,
+            } => {
+                let q = queries.get(name)?;
+                Some(QuerySearchResult::Http {
+                    environments: environments.clone(),
+                    query: q,
+                })
+            }
+            GroupKind::Generic => None,
+        }
+    }
+    fn format_print(&self) {
+        match self {
+            GroupKind::Http { queries, .. } => {
+                let mut subq_table = default_table_structure();
+                eprintln!("Sub Queries");
+                let query_headers = agent::http2::Query::headers();
+                let headers = ["name"].iter().chain(query_headers);
+                subq_table.set_header(headers);
+
+                let query_rows = queries.iter().map(|(name, query)| {
+                    [name.clone()]
+                        .into_iter()
+                        .chain(query.into_row().into_iter())
+                });
+                subq_table.add_rows(query_rows);
+                eprintln!("{subq_table}");
+            }
+            GroupKind::Generic => todo!(),
+        }
+    }
+}
+
+impl Default for GroupKind {
+    fn default() -> Self {
+        Self::Generic
+    }
 }
 
 #[derive(Debug, Deserialize, Default, PartialEq, Eq, Clone, Serialize)]
 pub struct Group {
-    #[serde(default, rename="environment")]
-    environments: HashMap<String, Environment>,
-    #[serde(default, rename="group")]
-    groups: HashMap<String, Group>,
-    #[serde(default, rename="query")]
-    queries: HashMap<String, Query>,
+    #[serde(default, rename = "group")]
+    sub_groups: HashMap<String, Group>,
+    info: GroupKind,
 }
 
 impl Group {
     pub fn from_dir(path: impl AsRef<std::path::Path>) -> miette::Result<Self> {
         trace!("reading dir: {:?}", path.as_ref());
 
-        let mut group_entries = std::fs::read_dir(path.as_ref())
+        let mut sub_dir_entries = std::fs::read_dir(path.as_ref())
             .into_diagnostic()
             .wrap_err("Couldn't read directory group")?
             .collect::<Result<Vec<_>, _>>()
             .into_diagnostic()
             .wrap_err_with(|| format!("Invalid file entry: {:?}", path.as_ref()))?;
 
-        let mut group = group_entries
+        let mut group = sub_dir_entries
             .iter()
             .position(|e| e.file_name() == constants::GROUP_FILE_NAME)
-            .map(|file_index| group_entries.swap_remove(file_index).path()) // this will not panic because it is taken from position
+            .map(|file_index| sub_dir_entries.swap_remove(file_index).path()) // this will not panic because it is taken from position
             .map(|group_path| Self::from_file(group_path))
             .transpose()?
-            .unwrap_or_default();
+            .unwrap_or_default(); // create generic group
 
-        let subgroups = group_entries
+        let subgroups = sub_dir_entries
             .into_iter()
             .filter(|entry| {
                 if !entry.path().ends_with("toml") {
@@ -117,7 +155,7 @@ impl Group {
             .collect::<Result<HashMap<_, _>, miette::Error>>()
             .wrap_err("Couldn't read group")?;
 
-        group.groups.extend(subgroups);
+        group.sub_groups.extend(subgroups);
 
         Ok(group)
     }
@@ -159,20 +197,17 @@ impl Group {
                 name: None,
                 sub_query: None,
                 sub_group: Some(GroupSearchResult {
-                    queries: &self.queries,
-                    groups: &self.groups,
+                    queries: &self.info,
+                    groups: &self.sub_groups,
                 }),
             });
         };
 
         if rest.is_empty() {
             trace!("finding group/query {}", key.as_ref());
-            let sub_query = self.queries.get(key.as_ref()).map(|q| QuerySearchResult {
-                query: q,
-                environments: self.environments.clone(),
-            });
+            let sub_query = self.info.find_query(key.as_ref());
             let sub_group = self
-                .groups
+                .sub_groups
                 .get(key.as_ref())
                 .map(|g| GroupSearchResult::from(g));
 
@@ -188,85 +223,80 @@ impl Group {
         } else {
             trace!("finding group with name {}", key.as_ref());
             // if there are no subgroup but query still has params then search is invalid so return None
-            let sub_group = self.groups.get(key.as_ref())?;
+            let sub_group = self.sub_groups.get(key.as_ref())?;
 
             // if one of the subgroup finds None then popout that None
             let mut qset = sub_group.find(rest)?;
-            if let Some(q) = &mut qset.sub_query {
-                self.environments.iter().for_each(|(key, parent_env)| {
-                    q.environments
-                        .entry(key.to_owned())
-                        .and_modify(|cur_env|  // if the current env is not empty then just apply missing fields from parent env
-                            if let Err(e) = cur_env.apply(parent_env) {
-                                debug!(parent=?parent_env, self=?cur_env, "Skipping merge of environment: {e}");
-                            }
-                        )
-                        .or_insert_with(|| parent_env.clone()); // there is no such env so just copy parent env
-                });
-            };
+            if let Some(ref mut qresult) = qset.sub_query {
+                qresult.apply_group_env(&self.info);
+            }
             Some(qset)
+        }
+    }
+
+    fn headers() -> &'static [&'static str] {
+        &["kind"]
+    }
+    fn into_row(&self) -> Vec<String> {
+        match &self.info {
+            GroupKind::Http { .. } => {
+                vec!["http".to_string()]
+            }
+            GroupKind::Generic => vec!["generic".to_string()],
         }
     }
 }
 
-#[derive(Debug, Deserialize, Hash, PartialEq, Eq, Clone, Serialize)]
-#[serde(rename_all="snake_case", tag="type")]
-enum Environment {
-    Rest(agent::http2::RestEnvironment),
-}
-
-impl Environment {
-    fn apply(&mut self, other: &Self) -> miette::Result<()> {
-        match (self, other) {
-            (Environment::Rest(cur_env), Environment::Rest(parent_env)) => {
-                cur_env.apply(parent_env)
-            }
-            _ => {
-                miette::bail!("Incompatible parent env")
-            }
-        };
-        Ok(())
-    }
-}
-
-impl std::fmt::Display for Environment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
-}
-
-#[derive(Debug, Deserialize, Hash, PartialEq, Eq, Clone, Serialize)]
-enum Query {
-    Rest(agent::http2::Query),
-}
-
-impl std::fmt::Display for Query {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
-}
-
 #[derive(Debug, Serialize)]
-pub struct QuerySearchResult<'g> {
-    environments: HashMap<String, Environment>,
-    query: &'g Query,
+pub enum QuerySearchResult<'g> {
+    Http {
+        environments: HashMap<String, agent::http2::Environment>,
+        query: &'g agent::http2::Query,
+    },
 }
 
 impl<'g> QuerySearchResult<'g> {
+    fn apply_group_env(&mut self, group: &GroupKind) {
+        match (self, group) {
+            (
+                QuerySearchResult::Http { environments, .. },
+                GroupKind::Http {
+                    environments: parent_env,
+                    ..
+                },
+            ) => {
+                parent_env.iter().for_each(|(key, parent_env)| {
+                    environments
+                        .entry(key.to_owned())
+                        .and_modify(|cur_env| cur_env.apply(parent_env)) // if the current env is not empty then just apply missing fields from parent env
+                        .or_insert_with(|| parent_env.clone()); // there is no such env so just copy parent env
+                });
+            }
+            (_, GroupKind::Generic) => debug!("parent group is generic group, ignoring"),
+        }
+    }
+
     fn format_print(&self) {
-        eprintln!("{}", self.query);
-        eprintln!("Available environments:\n");
-        let mut table = comfy_table::Table::new();
-        table
-            .load_preset(comfy_table::presets::UTF8_FULL)
-            .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
-        table.set_header(["name", "description"]);
-        let rows = self.environments.iter().map(|(name, env)| {
-            let desc = env.to_string();
-            [name.clone(), desc]
-        });
-        table.add_rows(rows);
-        eprintln!("{table}");
+        match self {
+            QuerySearchResult::Http {
+                environments,
+                query,
+            } => {
+                let formatted_query = query.to_string();
+                eprintln!("{formatted_query}");
+
+                eprintln!("Environments:");
+                let mut table = default_table_structure();
+                let env_headers = agent::http2::Environment::headers();
+                let headers = ["name"].iter().chain(env_headers.into_iter());
+
+                table.set_header(headers);
+                let rows = environments
+                    .iter()
+                    .map(|(name, e)| [name.clone()].into_iter().chain(e.into_row().into_iter()));
+                table.add_rows(rows);
+            }
+        }
     }
 }
 
@@ -276,16 +306,44 @@ impl<'g> QuerySearchResult<'g> {
 pub struct GroupSearchResult<'g> {
     /// search result can optionally contain a group
     groups: &'g HashMap<String, Group>,
-    queries: &'g HashMap<String, Query>,
+    queries: &'g GroupKind,
 }
 
 impl<'g> From<&'g Group> for GroupSearchResult<'g> {
     fn from(value: &'g Group) -> Self {
         Self {
-            groups: &value.groups,
-            queries: &value.queries,
+            groups: &value.sub_groups,
+            queries: &value.info,
         }
     }
+}
+
+impl<'g> GroupSearchResult<'g> {
+    fn format_print(&self) {
+        if !self.groups.is_empty() {
+            let mut subg_table = default_table_structure();
+
+            let headers = ["name"].iter().chain(Group::headers().iter());
+            subg_table.set_header(headers);
+
+            let subg_rows = self
+                .groups
+                .iter()
+                .map(|(name, subg)| [name.clone()].into_iter().chain(subg.into_row()));
+            subg_table.add_rows(subg_rows);
+            eprintln!("{subg_table}");
+        }
+
+        self.queries.format_print();
+    }
+}
+
+fn default_table_structure() -> comfy_table::Table {
+    let mut table = comfy_table::Table::new();
+    table
+        .load_preset(comfy_table::presets::UTF8_FULL)
+        .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
+    table
 }
 
 #[derive(Debug, Serialize)]
@@ -303,36 +361,12 @@ impl<'g, 'i> SearchResult<'g, 'i> {
             query.format_print();
         };
         if let Some(group) = &self.sub_group {
-            if !group.groups.is_empty() {
-                let mut subg_table = comfy_table::Table::new();
-                subg_table
-                    .load_preset(comfy_table::presets::UTF8_FULL)
-                    .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
-
-                let sub_group_names = group.groups.keys().map(|name| [name]);
-                if let Some(name) = self.name {
-                    subg_table.set_header([format!("{name} sub_groups")]);
-                } else {
-                    subg_table.set_header(["sub_groups"]);
-                }
-                subg_table.add_rows(sub_group_names);
-                eprintln!("{subg_table}");
+            if let Some(name) = self.name {
+                eprintln!("{name} sub_groups");
+            } else {
+                eprintln!("sub_groups");
             }
-
-            if !group.queries.is_empty() {
-                let mut subq_table = comfy_table::Table::new();
-                subq_table
-                    .load_preset(comfy_table::presets::UTF8_FULL)
-                    .apply_modifier(comfy_table::modifiers::UTF8_ROUND_CORNERS);
-                let sub_query_names = group.queries.keys().map(|name| [name]);
-                if let Some(name) = self.name {
-                    subq_table.set_header([format!("{name} sub_groups")]);
-                } else {
-                    subq_table.set_header(["sub_groups"]);
-                }
-                subq_table.add_rows(sub_query_names);
-                eprintln!("{subq_table}");
-            }
+            group.format_print()
         }
     }
 
