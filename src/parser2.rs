@@ -71,7 +71,7 @@ impl GroupInfo {
                 let q = queries.get(name)?;
                 Some(QuerySearchResult::Http {
                     environments: environments.clone(),
-                    query: q,
+                    query: q.clone(),
                 })
             }
             GroupInfo::Generic => None,
@@ -259,14 +259,14 @@ impl Group {
 }
 
 #[derive(Debug, Serialize)]
-pub enum QuerySearchResult<'g> {
+pub enum QuerySearchResult {
     Http {
         environments: HashMap<String, agent::http2::Environment>,
-        query: &'g agent::http2::Query,
+        query: agent::http2::Query,
     },
 }
 
-impl<'g> QuerySearchResult<'g> {
+impl QuerySearchResult {
     fn apply_group_env(&mut self, group: &GroupInfo) {
         match (self, group) {
             (
@@ -310,7 +310,32 @@ impl<'g> QuerySearchResult<'g> {
             }
         }
     }
+    pub async fn exec_with_args(
+        self,
+        args: &crate::Arguments,
+        env: &str,
+        store: &crate::store::Store,
+    ) -> miette::Result<Option<QueryResponse>> {
+        match self {
+            QuerySearchResult::Http {
+                mut environments,
+                query,
+            } => {
+                let Some(env) = environments.remove(env) else {
+                    let available_env: Vec<_> = environments.keys().collect();
+                    miette::bail!(
+                        help = format!("set {}", crate::constants::KEY_CURRENT_ENVIRONMENT),
+                        "Couldn't find environment {env}, available are {available_env:?}"
+                    )
+                };
+                query.execute(env, store, args).await
+            }
+        }
+    }
 }
+
+pub type QueryResponse = Vec<u8>;
+
 
 /// set of environments and query result
 /// search result can be another group or a query
@@ -358,9 +383,9 @@ fn default_table_structure() -> comfy_table::Table {
 
 #[derive(Debug, Serialize)]
 pub struct SearchResult<'g, 'i> {
-    name: Option<&'i str>,
-    sub_query: Option<QuerySearchResult<'g>>,
-    sub_group: Option<GroupSearchResult<'g>>,
+    pub name: Option<&'i str>,
+    pub sub_query: Option<QuerySearchResult>,
+    pub sub_group: Option<GroupSearchResult<'g>>,
 }
 
 impl<'g, 'i> SearchResult<'g, 'i> {

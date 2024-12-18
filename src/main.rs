@@ -123,10 +123,11 @@ async fn main() -> miette::Result<()> {
 
     debug!(query_set=?groups, "parsed services");
 
+    let query_set = groups
+        .find(&args.endpoint)
+        .ok_or_else(|| miette::miette!("no such query or group found"))?;
+
     if args.list || args.list_json {
-        let query_set = groups
-            .find(&args.endpoint)
-            .ok_or_else(|| miette::miette!("no such query or group found"))?;
         debug!(found=?query_set, "found query/group");
         if args.list_json {
             query_set.json_print()?;
@@ -134,6 +135,29 @@ async fn main() -> miette::Result<()> {
             query_set.format_print();
         }
     } else {
+        let env = std::env::var(constants::KEY_CURRENT_ENVIRONMENT)
+            .into_diagnostic()
+            .wrap_err_with(|| {
+                format!(
+                    "Couldn't get environment,{} ",
+                    constants::KEY_CURRENT_ENVIRONMENT
+                )
+            })?;
+        let config_store = crate::store::Store::with_env(&config.project)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Couldn't read store values of {}", config.project))?;
+        debug!("current config: {config_store:?}");
+
+        let Some(query_result) = query_set.sub_query else {
+            if let Some(name) = query_set.name {
+                miette::bail!("{name} is not an query")
+            } else {
+                miette::bail!("Couldn't find query")
+            }
+        };
+        let response_body = query_result
+            .exec_with_args(&args, &env, &config_store)
+            .await?;
         /*
         let response_body = crate::agent::http::run(
             &services,
@@ -147,6 +171,7 @@ async fn main() -> miette::Result<()> {
             args.input.as_deref(),
         )
         .await?;
+        */
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {
                 std::fs::write(&output_file, body)
@@ -159,7 +184,6 @@ async fn main() -> miette::Result<()> {
                     .wrap_err("Failed to write body to stdout")?
             }
         }
-        */
     }
     Ok(())
 }
