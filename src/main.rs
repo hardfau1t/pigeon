@@ -2,7 +2,6 @@ mod agent;
 mod constants;
 mod hook;
 mod parser;
-mod parser2;
 mod store;
 
 use std::io::Write;
@@ -117,9 +116,9 @@ async fn main() -> miette::Result<()> {
 
     debug!(extra_args=?args.args, "Arguments for the scripts");
 
-    let config = parser2::Config::open(&args.config_file)?;
+    let config = parser::Config::open(&args.config_file)?;
 
-    let groups = parser2::Group::from_dir(config.api_directory)?;
+    let groups = parser::Group::from_dir(config.api_directory)?;
 
     debug!(query_set=?groups, "parsed services");
 
