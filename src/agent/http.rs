@@ -406,6 +406,7 @@ impl MergedQuery {
             .request(method, url)
             .headers(headers)
             .timeout(self.timeout)
+            .query(&self.args)
             .version(self.version.into());
         let builder = if let Some(body) = self.body {
             body.apply_to_request(builder)

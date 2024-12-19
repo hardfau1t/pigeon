@@ -9,6 +9,7 @@ description = "get something"
 path = "/get"
 method = "GET"
 args = [["abc", "def"], ["h", "i"]]
+headers = {"custom" = "hab"}
 
 [group.methods]
 type = "http"
