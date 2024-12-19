@@ -911,6 +911,7 @@ dependencies = [
  "dirs",
  "http",
  "miette",
+ "mime",
  "reqwest",
  "rmp-serde",
  "rmpv",

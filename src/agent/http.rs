@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref, str::FromStr};
+use std::{collections::HashMap, io::Read, ops::Deref, str::FromStr};
 
 use miette::{Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
@@ -146,6 +146,31 @@ impl std::fmt::Display for Query {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum UnpackedBody {
+    Utf8(String),
+    Raw(Vec<u8>),
+}
+
+impl UnpackedBody {
+    fn substitute(self, vars: &HashMap<String, String>) -> Result<Self, subst::Error> {
+        match self {
+            UnpackedBody::Utf8(s) => Ok(Self::Utf8(subst::substitute(&s, vars)?)),
+            UnpackedBody::Raw(vec) => Ok(Self::Raw(vec)),
+        }
+    }
+}
+
+impl From<UnpackedBody> for reqwest::Body {
+    fn from(value: UnpackedBody) -> Self {
+        match value {
+            UnpackedBody::Utf8(s) => reqwest::Body::from(s),
+            UnpackedBody::Raw(vec) => reqwest::Body::from(vec),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, Serialize)]
 enum Body {
     ApplicationJson(Content<String>),
@@ -160,20 +185,89 @@ enum Body {
 }
 
 impl Body {
-    fn apply_to_request(self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        todo!()
+    fn unpack(self) -> miette::Result<(String, UnpackedBody)> {
+        match self {
+            Body::ApplicationJson(content) => {
+                let val = content
+                    .get_value()
+                    .wrap_err("Couldn't extract application/json body")?;
+                Ok((
+                    mime::APPLICATION_JSON.as_ref().to_string(),
+                    UnpackedBody::Utf8(val),
+                ))
+            }
+            Body::Raw { content_type, data } => {
+                let val = data
+                    .get_value()
+                    .wrap_err("Couldn't extract application/json body")?;
+                Ok((content_type, UnpackedBody::Raw(val)))
+            }
+            Body::RawText { content_type, data } => {
+                let val = data
+                    .get_value()
+                    .wrap_err("Couldn't extract application/json body")?;
+                Ok((content_type, UnpackedBody::Utf8(val)))
+            }
+        }
     }
+}
 
-    fn substitute(self) -> Result<Self, subst::Error> {
-        todo!()
+trait FromBytes {
+    type Error: core::error::Error + Send + Sync + 'static;
+    fn from_bytes(vec: Vec<u8>) -> Result<Self, Self::Error>
+    where
+        Self: Sized;
+}
+
+impl FromBytes for Vec<u8> {
+    type Error = std::convert::Infallible;
+
+    fn from_bytes(vec: Vec<u8>) -> Result<Self, Self::Error>
+    where
+        Self: Sized,
+    {
+        Ok(vec)
+    }
+}
+
+impl FromBytes for String {
+    type Error = std::string::FromUtf8Error;
+
+    fn from_bytes(vec: Vec<u8>) -> Result<Self, Self::Error>
+    where
+        Self: Sized,
+    {
+        String::from_utf8(vec)
     }
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Content<T> {
+enum Content<T: FromBytes> {
     File(std::path::PathBuf),
     Inline(T),
+}
+
+impl<T: FromBytes> Content<T> {
+    fn get_value(self) -> miette::Result<T> {
+        match self {
+            Content::File(path_buf) => {
+                let mut file = std::fs::File::open(&path_buf)
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("Couldn't open file: {path_buf:?}"))?;
+                let mut content = Vec::new();
+                let read_bytes = file
+                    .read_to_end(&mut content)
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("Couldn't read file: {path_buf:?}"))?;
+                debug!("read: {read_bytes} bytes from {path_buf:?}");
+                T::from_bytes(content)
+                    .into_diagnostic()
+                    .wrap_err("Couldn't convert file content to intented type")
+            }
+            Content::Inline(i) => Ok(i),
+        }
+    }
 }
 
 impl Query {
@@ -238,28 +332,29 @@ impl Query {
 
         let pre_hook = self.pre_hook.take();
         let post_hook = self.post_hook.take();
-        let substituted_query = self
-            .substitute(local_store)
-            .into_diagnostic()
-            .wrap_err("Couldn't substitute Query request")?;
         let mut hook_args = cmd_args.args.split(|flag| flag == "--");
         let pre_hook_args = hook_args.next().unwrap_or(&[]);
         let post_hook_args = hook_args.next().unwrap_or(&[]);
 
-        let q = if let Some(pre_hook) = pre_hook {
-            pre_hook.run(&substituted_query, pre_hook_args)?
+        let prepared_query: PreparedQuery = self.try_into().wrap_err("Couldn't Create Query")?;
+        let query = if let Some(pre_hook) = pre_hook {
+            pre_hook.run(&prepared_query, pre_hook_args)?
         } else {
-            substituted_query
+            prepared_query
         };
 
+        let substituted_query = query
+            .substitute(&local_store)
+            .into_diagnostic()
+            .wrap_err("Couldn't substitute Query request")?;
         let client = reqwest::Client::builder()
             .user_agent(APP_USER_AGENT)
             .build()
             .into_diagnostic()
             .wrap_err("Couldn't build client")?;
 
-        let request = q
-            .prepare(base_url, &client)
+        let request = substituted_query
+            .into_request(base_url, &client)
             .wrap_err("Couldn't construct Query")?;
 
         display_request(&request);
@@ -285,39 +380,136 @@ impl Query {
 
         Ok(response.into())
     }
+}
 
-    fn substitute(self, vars: HashMap<String, String>) -> Result<MergedQuery, subst::Error> {
-        let path = subst::substitute(&self.path, &vars)?;
-        let method = subst::substitute(&self.method, &vars)?;
+#[derive(Debug, Serialize, Deserialize)]
+struct PreparedQuery {
+    path: String,
+    method: String,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    #[serde(default)]
+    args: Vec<(String, String)>,
+    #[serde(default = "default_timeout")]
+    timeout: std::time::Duration,
+    #[serde(default)]
+    version: HttpVersion,
+    body: Option<UnpackedBody>,
+}
 
-        let headers = self
-            .headers
+impl TryFrom<Query> for PreparedQuery {
+    type Error = miette::Error;
+
+    fn try_from(query: Query) -> Result<Self, Self::Error> {
+        if let Some((content_type, body)) = query
+            .body
+            .map(|b| b.unpack())
+            .transpose()
+            .wrap_err("Couldn't unpack request body")?
+        {
+            let mut headers = query.headers;
+            headers.insert(reqwest::header::CONTENT_TYPE.to_string(), content_type);
+            Ok(Self {
+                path: query.path,
+                method: query.method,
+                headers,
+                args: query.args,
+                timeout: query.timeout,
+                version: query.version,
+                body: Some(body),
+            })
+        } else {
+            Ok(Self {
+                path: query.path,
+                method: query.method,
+                headers: query.headers,
+                args: query.args,
+                timeout: query.timeout,
+                version: query.version,
+                body: None,
+            })
+        }
+    }
+}
+
+impl PreparedQuery {
+    fn into_request(
+        self,
+        base_url: reqwest::Url,
+        client: &reqwest::Client,
+    ) -> miette::Result<reqwest::Request> {
+        let url = base_url
+            .join(&self.path)
+            .into_diagnostic()
+            .wrap_err("Couldn't construct url")?;
+        let method = reqwest::Method::from_str(&self.method)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("invalid method: {}", self.method))?;
+
+        let headers = (&self.headers)
+            .try_into()
+            .into_diagnostic()
+            .wrap_err("Invalid headers")?;
+        // TODO: add basic auth and bearer auth
+        // TODO: support for multipart
+        // TODO: support for form
+        let builder = client
+            .request(method, url)
+            .headers(headers)
+            .timeout(self.timeout)
+            .query(&self.args)
+            .version(self.version.into());
+        let builder = if let Some(body) = self.body {
+            builder.body(body)
+        } else {
+            builder
+        };
+
+        builder
+            .build()
+            .into_diagnostic()
+            .wrap_err("Couldn't build request")
+    }
+
+    fn substitute(self, vars: &HashMap<String, String>) -> Result<Self, subst::Error> {
+        let Self {
+            path,
+            method,
+            headers,
+            args,
+            timeout,
+            version,
+            body,
+        } = self;
+        let path = subst::substitute(&path, vars)?;
+        let method = subst::substitute(&method, vars)?;
+
+        let headers = headers
             .into_iter()
             .map(|(key, value)| {
-                let key = subst::substitute(&key, &vars)?;
-                let val = subst::substitute(&value, &vars)?;
+                let key = subst::substitute(&key, vars)?;
+                let val = subst::substitute(&value, vars)?;
                 Ok((key, val))
             })
             .collect::<Result<_, subst::Error>>()?;
 
-        let args = self
-            .args
+        let args = args
             .into_iter()
             .map(|(key, value)| {
-                let key = subst::substitute(&key, &vars)?;
-                let val = subst::substitute(&value, &vars)?;
+                let key = subst::substitute(&key, vars)?;
+                let val = subst::substitute(&value, vars)?;
                 Ok((key, val))
             })
             .collect::<Result<_, subst::Error>>()?;
 
-        Ok(MergedQuery {
+        Ok(Self {
             path,
             headers,
             args,
             method,
-            timeout: self.timeout,
-            version: self.version,
-            body: self.body.map(|body| body.substitute()).transpose()?,
+            timeout,
+            version,
+            body: body.map(|body| body.substitute(vars)).transpose()?,
         })
     }
 }
@@ -367,58 +559,6 @@ fn display_request(request: &reqwest::Request) {
     }
     let headers = DisplayRequestHeaders(request.headers());
     info!("headers: {headers}",)
-}
-
-/// Generated after merging Query and environment
-#[derive(Debug, Deserialize, Serialize)]
-struct MergedQuery {
-    path: String,
-    headers: HashMap<String, String>,
-    args: Vec<(String, String)>,
-    timeout: std::time::Duration,
-    version: HttpVersion,
-    body: Option<Body>,
-    method: String,
-}
-
-impl MergedQuery {
-    fn prepare(
-        self,
-        base_url: reqwest::Url,
-        client: &reqwest::Client,
-    ) -> miette::Result<reqwest::Request> {
-        let url = base_url
-            .join(&self.path)
-            .into_diagnostic()
-            .wrap_err("Couldn't construct url")?;
-        let method = reqwest::Method::from_str(&self.method)
-            .into_diagnostic()
-            .wrap_err_with(|| format!("invalid method: {}", self.method))?;
-
-        let headers = (&self.headers)
-            .try_into()
-            .into_diagnostic()
-            .wrap_err("Invalid headers")?;
-        // TODO: add basic auth and bearer auth
-        // TODO: support for multipart
-        // TODO: support for form
-        let builder = client
-            .request(method, url)
-            .headers(headers)
-            .timeout(self.timeout)
-            .query(&self.args)
-            .version(self.version.into());
-        let builder = if let Some(body) = self.body {
-            body.apply_to_request(builder)
-        } else {
-            builder
-        };
-
-        builder
-            .build()
-            .into_diagnostic()
-            .wrap_err("Couldn't build request")
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
