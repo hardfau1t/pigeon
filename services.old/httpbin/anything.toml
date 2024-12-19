@@ -1,0 +1,6 @@
+[endpoint.multipart]
+description="try to post multipart request"
+method = "post"
+path = "/anything"
+body.kind = "form/multipart"
+body.data = "abc"

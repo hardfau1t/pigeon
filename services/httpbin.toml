@@ -1,0 +1,18 @@
+type = "http"
+
+[environment.dev]
+scheme = "http"
+host = "httpbin.org"
+
+[query.get]
+description = "get something"
+path = "/get"
+method = "GET"
+args = [["abc", "def"], ["h", "i"]]
+
+[group.methods]
+type = "http"
+
+[group.methods.environment.staging]
+scheme = "https"
+host = "httpbin.org"

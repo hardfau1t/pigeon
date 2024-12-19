@@ -1,0 +1,12 @@
+type = "http"
+
+[environment.dev]
+scheme = "http"
+host = "localhost"
+port = 8080
+
+[query.get]
+description = " To check exact request"
+path = "/get"
+method = "GET"
+args = [["abc", "def"], ["h", "i"]]
