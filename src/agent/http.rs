@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::Deref, str::FromStr};
 
 use miette::{Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 use yansi::Paint;
 
 //NOTE: if any new field is added to this, update apply method
@@ -346,11 +346,25 @@ impl<'a> std::fmt::Display for DisplayRequestHeaders<'a> {
     }
 }
 
+fn is_extension_method(method: &reqwest::Method) -> bool {
+    match method.as_str() {
+        "GET" | "PUT" | "POST" | "HEAD" | "PATCH" | "TRACE" | "DELETE" | "OPTIONS" | "CONNECT" => {
+            false
+        }
+        _ => true,
+    }
+}
+
 fn display_request(request: &reqwest::Request) {
     // TODO: format print request
     let method = request.method();
     let url = request.url().as_str();
-    info!("[{method}]: {url}");
+    if is_extension_method(method) {
+        warn!("using non-standard extension method: {method}");
+        info!("[{}]: {url}", method.red().bold());
+    } else {
+        info!("[{method}]: {url}");
+    }
     let headers = DisplayRequestHeaders(request.headers());
     info!("headers: {headers}",)
 }
