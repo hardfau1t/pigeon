@@ -2,6 +2,11 @@ type = "http"
 
 [environment.dev]
 scheme = "http"
+host = "localhost"
+port = 80
+
+[environment.staging]
+scheme = "https"
 host = "httpbin.org"
 
 [query.get]
@@ -10,6 +15,19 @@ path = "/get"
 method = "GET"
 args = [["abc", "def"], ["h", "i"]]
 headers = {"custom" = "hab"}
+
+[query.delete]
+description = "delete something"
+path = "/delete"
+method = "DELETE"
+
+[query.post]
+description = "post data"
+path = "/post"
+method = "POST"
+body."application/json".inline = '''{"a": "b"}'''
+pre_hook.script = "./example-hooks/httpbin/post.nu"
+
 
 [group.methods]
 type = "http"

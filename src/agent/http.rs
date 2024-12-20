@@ -297,7 +297,9 @@ impl From<UnpackedBody> for reqwest::Body {
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
 enum Body {
+    #[serde(rename = "application/json")]
     ApplicationJson(Content<String>),
     Raw {
         content_type: String,
