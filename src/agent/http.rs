@@ -191,6 +191,12 @@ impl Query {
         let post_hook_args = hook_args.next().unwrap_or(&[]);
 
         let prepared_query: PreparedQuery = self.try_into().wrap_err("Couldn't Create Query")?;
+        if cmd_args.debug_prehook {
+            let body_buf = rmp_serde::encode::to_vec_named(&prepared_query)
+                .into_diagnostic()
+                .wrap_err("serializing input body")?;
+            return Ok(Some(body_buf));
+        }
         let query = if let Some(pre_hook) = pre_hook {
             pre_hook.run(&prepared_query, pre_hook_args)?
         } else {
@@ -223,6 +229,13 @@ impl Query {
         let response = Response::read_response(response)
             .await
             .wrap_err("Couldn't read response")?;
+
+        if cmd_args.debug_posthook {
+            let body_buf = rmp_serde::encode::to_vec_named(&response)
+                .into_diagnostic()
+                .wrap_err("failed to serialize response")?;
+            return Ok(Some(body_buf));
+        }
 
         let response = if let Some(post_hook) = post_hook {
             post_hook

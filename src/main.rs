@@ -79,6 +79,14 @@ struct Arguments {
     #[arg(long = "skip-posthook", conflicts_with("skip_hooks"))]
     skip_posthook: bool,
 
+    /// stop before pre hook and write pre hook data to stdout. Useful for developing pre-hook
+    #[arg(long = "debug-prehook", conflicts_with_all(["skip_hooks", "skip_prehook"]))]
+    debug_prehook: bool,
+
+    /// stop before post hook and write post hook data to stdout. Useful for developing post-hook
+    #[arg(long = "debug-posthook", conflicts_with_all(["skip_hooks", "skip_posthook"]))]
+    debug_posthook: bool,
+
     /// output collected services as json output
     #[arg(long("list-json"), conflicts_with("list"))]
     list_json: bool,
