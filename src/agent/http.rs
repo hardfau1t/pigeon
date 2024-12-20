@@ -48,7 +48,7 @@ impl Environment {
             self.host.get_or_insert_with(|| parent_host.clone());
         }
         if let Some(parent_port) = &other.port {
-            self.port.get_or_insert_with(|| parent_port.clone());
+            self.port.get_or_insert(*parent_port);
         }
         if let Some(parent_prefix) = &other.prefix {
             self.prefix.get_or_insert_with(|| parent_prefix.clone());
@@ -70,10 +70,10 @@ impl Environment {
         &["scheme", "host", "port"]
     }
 
-    pub fn into_row(&self) -> Vec<String> {
+    pub fn to_row(&self) -> Vec<String> {
         let scheme = self.scheme.clone().unwrap_or_default();
         let host = self.host.clone().unwrap_or_default();
-        let port = self.port.clone().map(|p| p.to_string()).unwrap_or_default();
+        let port = self.port.map(|p| p.to_string()).unwrap_or_default();
         vec![scheme, host, port]
     }
 }
@@ -132,7 +132,7 @@ impl Query {
     }
 
     /// gives vec of cells, used for format printing queries
-    pub fn into_row(&self) -> Vec<String> {
+    pub fn to_row(&self) -> Vec<String> {
         vec![self.method.clone(), self.path.clone()]
     }
 
@@ -532,7 +532,7 @@ impl PreparedQuery {
 /// To display headers
 struct DisplayResponseHeaders<'a>(&'a reqwest::header::HeaderMap);
 
-impl<'a> std::fmt::Display for DisplayResponseHeaders<'a> {
+impl std::fmt::Display for DisplayResponseHeaders<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (key, val) in self.0 {
             write!(f, "\n< {}: {:?}", key.yellow(), val)?
@@ -544,7 +544,7 @@ impl<'a> std::fmt::Display for DisplayResponseHeaders<'a> {
 /// To display headers
 struct DisplayRequestHeaders<'a>(&'a reqwest::header::HeaderMap);
 
-impl<'a> std::fmt::Display for DisplayRequestHeaders<'a> {
+impl std::fmt::Display for DisplayRequestHeaders<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (key, val) in self.0 {
             write!(f, "\n> {}: {:?}", key.yellow(), val)?
@@ -554,12 +554,10 @@ impl<'a> std::fmt::Display for DisplayRequestHeaders<'a> {
 }
 
 fn is_extension_method(method: &reqwest::Method) -> bool {
-    match method.as_str() {
-        "GET" | "PUT" | "POST" | "HEAD" | "PATCH" | "TRACE" | "DELETE" | "OPTIONS" | "CONNECT" => {
-            false
-        }
-        _ => true,
-    }
+    !matches!(
+        method.as_str(),
+        "GET" | "PUT" | "POST" | "HEAD" | "PATCH" | "TRACE" | "DELETE" | "OPTIONS" | "CONNECT"
+    )
 }
 
 fn display_request(request: &reqwest::Request) {

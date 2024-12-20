@@ -91,11 +91,9 @@ impl GroupInfo {
                     let headers = ["name"].iter().chain(query_headers);
                     subq_table.set_header(headers);
 
-                    let query_rows = queries.iter().map(|(name, query)| {
-                        [name.clone()]
-                            .into_iter()
-                            .chain(query.into_row().into_iter())
-                    });
+                    let query_rows = queries
+                        .iter()
+                        .map(|(name, query)| [name.clone()].into_iter().chain(query.to_row()));
                     subq_table.add_rows(query_rows);
                     eprintln!("{subq_table}");
                 }
@@ -135,7 +133,7 @@ impl Group {
             .iter()
             .position(|e| e.file_name() == constants::GROUP_FILE_NAME)
             .map(|file_index| sub_dir_entries.swap_remove(file_index).path()) // this will not panic because it is taken from position
-            .map(|group_path| Self::from_file(group_path))
+            .map(Self::from_file)
             .transpose()?
             .unwrap_or_default(); // create generic group
 
@@ -220,7 +218,7 @@ impl Group {
             let sub_group = self
                 .sub_groups
                 .get(key.as_ref())
-                .map(|g| GroupSearchResult::from(g));
+                .map(GroupSearchResult::from);
 
             if sub_query.is_none() && sub_group.is_none() {
                 warn!("no such group/query: {}", key.as_ref());
@@ -248,7 +246,7 @@ impl Group {
     fn headers() -> &'static [&'static str] {
         &["kind"]
     }
-    fn into_row(&self) -> Vec<String> {
+    fn to_row(&self) -> Vec<String> {
         match &self.info {
             GroupInfo::Http { .. } => {
                 vec!["http".to_string()]
@@ -299,12 +297,12 @@ impl QuerySearchResult {
                 eprintln!("Environments:");
                 let mut table = default_table_structure();
                 let env_headers = agent::http::Environment::headers();
-                let headers = ["name"].iter().chain(env_headers.into_iter());
+                let headers = ["name"].iter().chain(env_headers);
 
                 table.set_header(headers);
                 let rows = environments
                     .iter()
-                    .map(|(name, e)| [name.clone()].into_iter().chain(e.into_row().into_iter()));
+                    .map(|(name, e)| [name.clone()].into_iter().chain(e.to_row()));
                 table.add_rows(rows);
                 eprintln!("{table}");
             }
@@ -354,7 +352,7 @@ impl<'g> From<&'g Group> for GroupSearchResult<'g> {
     }
 }
 
-impl<'g> GroupSearchResult<'g> {
+impl GroupSearchResult<'_> {
     fn format_print(&self) {
         if !self.sub_groups.is_empty() {
             let mut subg_table = default_table_structure();
@@ -365,7 +363,7 @@ impl<'g> GroupSearchResult<'g> {
             let subg_rows = self
                 .sub_groups
                 .iter()
-                .map(|(name, subg)| [name.clone()].into_iter().chain(subg.into_row()));
+                .map(|(name, subg)| [name.clone()].into_iter().chain(subg.to_row()));
             subg_table.add_rows(subg_rows);
             eprintln!("{subg_table}");
         }
@@ -387,7 +385,7 @@ pub struct SearchResult<'g, 'i> {
     pub sub_group: Option<GroupSearchResult<'g>>,
 }
 
-impl<'g, 'i> SearchResult<'g, 'i> {
+impl<'i> SearchResult<'_, 'i> {
     pub fn format_print(&'i self) {
         if let Some(query) = &self.sub_query {
             let name = self.name.expect("name cannot be None for matched query");
