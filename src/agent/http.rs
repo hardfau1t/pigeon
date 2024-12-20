@@ -5,6 +5,26 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, trace, warn};
 use yansi::Paint;
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "snake_case")]
+enum HttpVersion {
+    Http09,
+    Http10,
+    Http11,
+    Http2,
+    Http3,
+}
+
+impl Default for HttpVersion {
+    fn default() -> Self {
+        Self::Http11
+    }
+}
+
+fn default_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(30)
+}
+
 //NOTE: if any new field is added to this, update apply method
 /// HTTP environment
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Serialize)]
@@ -58,26 +78,6 @@ impl Environment {
     }
 }
 
-fn default_timeout() -> std::time::Duration {
-    std::time::Duration::from_secs(30)
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "snake_case")]
-enum HttpVersion {
-    Http09,
-    Http10,
-    Http11,
-    Http2,
-    Http3,
-}
-
-impl Default for HttpVersion {
-    fn default() -> Self {
-        Self::Http11
-    }
-}
-
 impl From<HttpVersion> for reqwest::Version {
     fn from(value: HttpVersion) -> Self {
         match value {
@@ -122,6 +122,118 @@ pub struct Query {
     pre_hook: Option<crate::hook::Hook>,
     post_hook: Option<crate::hook::Hook>,
     body: Option<Body>,
+}
+
+impl Query {
+    /// Gives columns presennt in this structure
+    /// this is used for formatting
+    pub fn headers() -> &'static [&'static str] {
+        &["method", "path"]
+    }
+
+    /// gives vec of cells, used for format printing queries
+    pub fn into_row(&self) -> Vec<String> {
+        vec![self.method.clone(), self.path.clone()]
+    }
+
+    pub async fn execute(
+        mut self,
+        environ: Environment,
+        store: &crate::store::Store,
+        cmd_args: &crate::Arguments,
+    ) -> miette::Result<Option<crate::parser::QueryResponse>> {
+        trace!("Merging Query wit env");
+        let Environment {
+            scheme,
+            host,
+            port,
+            prefix: env_prefix,
+            mut headers,
+            store: env_store,
+            args: mut query_args,
+        } = environ;
+        let host = host.ok_or(miette::miette!("Host is empty"))?;
+        let scheme = scheme.ok_or(miette::miette!("Scheme is empty"))?;
+        headers.extend(self.headers);
+        self.headers = headers;
+        query_args.extend(self.args);
+        self.args = query_args;
+
+        let url_str = if let Some(port) = port {
+            format!("{scheme}://{host}:{port}",)
+        } else {
+            format!("{scheme}://{host}")
+        };
+        debug!(url = url_str, "Constructed Base Url");
+
+        let url = reqwest::Url::parse(&url_str)
+            .into_diagnostic()
+            .wrap_err("Couldn't parse given url")?;
+        let base_url = if let Some(prefix) = env_prefix {
+            url.join(&prefix)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("Couldn't append environment prefix: {prefix}"))?
+        } else {
+            url
+        }
+        .join(&self.path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Couldn't append path {}", self.path))?;
+
+        debug!(url = ?base_url, "Costructed base Url");
+        let mut local_store = store.deref().clone();
+        local_store.extend(env_store);
+
+        let pre_hook = self.pre_hook.take();
+        let post_hook = self.post_hook.take();
+        let mut hook_args = cmd_args.args.split(|flag| flag == "--");
+        let pre_hook_args = hook_args.next().unwrap_or(&[]);
+        let post_hook_args = hook_args.next().unwrap_or(&[]);
+
+        let prepared_query: PreparedQuery = self.try_into().wrap_err("Couldn't Create Query")?;
+        let query = if let Some(pre_hook) = pre_hook {
+            pre_hook.run(&prepared_query, pre_hook_args)?
+        } else {
+            prepared_query
+        };
+
+        let substituted_query = query
+            .substitute(&local_store)
+            .into_diagnostic()
+            .wrap_err("Couldn't substitute Query request")?;
+        let client = reqwest::Client::builder()
+            .user_agent(APP_USER_AGENT)
+            .build()
+            .into_diagnostic()
+            .wrap_err("Couldn't build client")?;
+
+        let request = substituted_query
+            .into_request(base_url, &client)
+            .wrap_err("Couldn't construct Query")?;
+
+        display_request(&request);
+
+        let response = client
+            .execute(request)
+            .await
+            .into_diagnostic()
+            .wrap_err("Request failed")?;
+
+        // convert response so that it can be sent to post hook
+        let response = Response::read_response(response)
+            .await
+            .wrap_err("Couldn't read response")?;
+
+        let response = if let Some(post_hook) = post_hook {
+            post_hook
+                .run(&response, post_hook_args)
+                .wrap_err("Failed to run post hook")?
+        } else {
+            response
+        };
+
+        Ok(response.into())
+    }
 }
 
 impl PartialEq for Query {
@@ -267,118 +379,6 @@ impl<T: FromBytes> Content<T> {
             }
             Content::Inline(i) => Ok(i),
         }
-    }
-}
-
-impl Query {
-    /// Gives columns presennt in this structure
-    /// this is used for formatting
-    pub fn headers() -> &'static [&'static str] {
-        &["method", "path"]
-    }
-
-    /// gives vec of cells, used for format printing queries
-    pub fn into_row(&self) -> Vec<String> {
-        vec![self.method.clone(), self.path.clone()]
-    }
-
-    pub async fn execute(
-        mut self,
-        environ: Environment,
-        store: &crate::store::Store,
-        cmd_args: &crate::Arguments,
-    ) -> miette::Result<Option<crate::parser::QueryResponse>> {
-        trace!("Merging Query wit env");
-        let Environment {
-            scheme,
-            host,
-            port,
-            prefix: env_prefix,
-            mut headers,
-            store: env_store,
-            args: mut query_args,
-        } = environ;
-        let host = host.ok_or(miette::miette!("Host is empty"))?;
-        let scheme = scheme.ok_or(miette::miette!("Scheme is empty"))?;
-        headers.extend(self.headers);
-        self.headers = headers;
-        query_args.extend(self.args);
-        self.args = query_args;
-
-        let url_str = if let Some(port) = port {
-            format!("{scheme}://{host}:{port}",)
-        } else {
-            format!("{scheme}://{host}")
-        };
-        debug!(url = url_str, "Constructed Base Url");
-
-        let url = reqwest::Url::parse(&url_str)
-            .into_diagnostic()
-            .wrap_err("Couldn't parse given url")?;
-        let base_url = if let Some(prefix) = env_prefix {
-            url.join(&prefix)
-                .into_diagnostic()
-                .wrap_err_with(|| format!("Couldn't append environment prefix: {prefix}"))?
-        } else {
-            url
-        }
-        .join(&self.path)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("Couldn't append path {}", self.path))?;
-
-        debug!(url = ?base_url, "Costructed base Url");
-        let mut local_store = store.deref().clone();
-        local_store.extend(env_store);
-
-        let pre_hook = self.pre_hook.take();
-        let post_hook = self.post_hook.take();
-        let mut hook_args = cmd_args.args.split(|flag| flag == "--");
-        let pre_hook_args = hook_args.next().unwrap_or(&[]);
-        let post_hook_args = hook_args.next().unwrap_or(&[]);
-
-        let prepared_query: PreparedQuery = self.try_into().wrap_err("Couldn't Create Query")?;
-        let query = if let Some(pre_hook) = pre_hook {
-            pre_hook.run(&prepared_query, pre_hook_args)?
-        } else {
-            prepared_query
-        };
-
-        let substituted_query = query
-            .substitute(&local_store)
-            .into_diagnostic()
-            .wrap_err("Couldn't substitute Query request")?;
-        let client = reqwest::Client::builder()
-            .user_agent(APP_USER_AGENT)
-            .build()
-            .into_diagnostic()
-            .wrap_err("Couldn't build client")?;
-
-        let request = substituted_query
-            .into_request(base_url, &client)
-            .wrap_err("Couldn't construct Query")?;
-
-        display_request(&request);
-
-        let response = client
-            .execute(request)
-            .await
-            .into_diagnostic()
-            .wrap_err("Request failed")?;
-
-        // convert response so that it can be sent to post hook
-        let response = Response::read_response(response)
-            .await
-            .wrap_err("Couldn't read response")?;
-
-        let response = if let Some(post_hook) = post_hook {
-            post_hook
-                .run(&response, post_hook_args)
-                .wrap_err("Failed to run post hook")?
-        } else {
-            response
-        };
-
-        Ok(response.into())
     }
 }
 
