@@ -33,27 +33,6 @@ struct Arguments {
     #[arg(short, long)]
     input: Option<std::path::PathBuf>,
 
-    /// content-type of the data.
-    /// if the services has `kind` then that has higher priority.
-    /// This should be used with `input` and `kind` is not set in services
-    #[arg(
-        short = 't',
-        long,
-        default_value = "text/plain",
-        default_value_if(
-            "content_type_json",
-            clap::builder::ArgPredicate::IsPresent,
-            "application/json"
-        ),
-        requires("input")
-    )]
-    content_type: String,
-
-    /// set content-type to json
-    /// alias to -t "application/json"
-    #[arg(long = "json")]
-    content_type_json: bool,
-
     /// list available options (services/endpoints)
     #[arg(short, long)]
     list: bool,
@@ -150,9 +129,12 @@ async fn main() -> miette::Result<()> {
                     constants::KEY_CURRENT_ENVIRONMENT
                 )
             })?;
-        let config_store = crate::store::Store::with_env(&config.project)
+        let mut config_store = crate::store::Store::with_env(&config.project)
             .into_diagnostic()
             .wrap_err_with(|| format!("Couldn't read store values of {}", config.project))?;
+
+        config_store.persistent(!args.no_persistent);
+
         debug!("current config: {config_store:?}");
 
         let Some(query_result) = query_set.sub_query else {
@@ -165,20 +147,7 @@ async fn main() -> miette::Result<()> {
         let response_body = query_result
             .exec_with_args(&args, &env, &config_store)
             .await?;
-        /*
-        let response_body = crate::agent::http::run(
-            &services,
-            &args.endpoint,
-            &args.args,
-            !args.no_persistent,
-            args.dry_run,
-            args.skip_hooks || args.skip_prehook,
-            args.skip_hooks || args.skip_posthook,
-            args.environment.as_deref(),
-            args.input.as_deref(),
-        )
-        .await?;
-        */
+
         if let Some(body) = response_body {
             if let Some(output_file) = args.output {
                 std::fs::write(&output_file, body)
