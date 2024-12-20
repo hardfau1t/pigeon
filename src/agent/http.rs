@@ -192,7 +192,7 @@ impl Query {
 
         let prepared_query: PreparedQuery = self.try_into().wrap_err("Couldn't Create Query")?;
         if cmd_args.debug_prehook {
-            let body_buf = rmp_serde::encode::to_vec_named(&prepared_query)
+            let body_buf = crate::hook::to_msgpack(&prepared_query)
                 .into_diagnostic()
                 .wrap_err("serializing input body")?;
             return Ok(Some(body_buf));
@@ -232,7 +232,7 @@ impl Query {
             .wrap_err("Couldn't read response")?;
 
         if cmd_args.debug_posthook {
-            let body_buf = rmp_serde::encode::to_vec_named(&response)
+            let body_buf = crate::hook::to_msgpack(&response)
                 .into_diagnostic()
                 .wrap_err("failed to serialize response")?;
             return Ok(Some(body_buf));

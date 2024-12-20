@@ -22,7 +22,7 @@ impl Hook {
     ) -> miette::Result<T> {
         trace!("running Hook");
         // size will always be larger than obj, but atleast optimize is for single allocation
-        let body_buf = rmp_serde::encode::to_vec_named(&input)
+        let body_buf = to_msgpack(&input)
             .into_diagnostic()
             .wrap_err("serializing input body")?;
         match self {
@@ -79,4 +79,14 @@ impl Hook {
             }
         }
     }
+}
+
+pub fn to_msgpack<T: Serialize>(value: &T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+    let mut output = Vec::new();
+    let mut serializer = rmp_serde::Serializer::new(&mut output)
+        .with_binary()
+        .with_struct_map()
+        .with_bytes(rmp_serde::config::BytesMode::ForceAll);
+    value.serialize(&mut serializer)?;
+    Ok(output)
 }
