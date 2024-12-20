@@ -197,11 +197,12 @@ impl Query {
                 .wrap_err("serializing input body")?;
             return Ok(Some(body_buf));
         }
-        let query = if let Some(pre_hook) = pre_hook {
-            pre_hook.run(&prepared_query, pre_hook_args)?
-        } else {
-            prepared_query
-        };
+        let query = pre_hook
+            .filter(|_| !(cmd_args.skip_hooks || cmd_args.skip_prehook))
+            .map(|hook| hook.run(&prepared_query, pre_hook_args))
+            .transpose()
+            .wrap_err("Failed to run pre hook")?
+            .unwrap_or(prepared_query);
 
         let substituted_query = query
             .substitute(&local_store)
@@ -237,13 +238,12 @@ impl Query {
             return Ok(Some(body_buf));
         }
 
-        let response = if let Some(post_hook) = post_hook {
-            post_hook
-                .run(&response, post_hook_args)
-                .wrap_err("Failed to run post hook")?
-        } else {
-            response
-        };
+        let response = post_hook
+            .filter(|_| !(cmd_args.skip_hooks || cmd_args.skip_posthook))
+            .map(|hook| hook.run(&response, post_hook_args))
+            .transpose()
+            .wrap_err("Failed to run post hook")?
+            .unwrap_or(response);
 
         Ok(response.into())
     }
