@@ -106,6 +106,30 @@ impl TryFrom<reqwest::Version> for HttpVersion {
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
+struct BasicAuth {
+    user_name: String,
+    password: Option<String>,
+}
+
+impl BasicAuth {
+    fn substitute(self, vars: &HashMap<String, String>) -> Result<Self, subst::Error> {
+        let Self {
+            user_name,
+            password,
+        } = self;
+        let user_name = subst::substitute(&user_name, vars)?;
+        let password = password.map(|p| subst::substitute(&p, vars)).transpose()?;
+        Ok(Self {
+            user_name,
+            password,
+        })
+    }
+    fn apply_request(self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request.basic_auth(self.user_name, self.password)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Query {
     description: Option<String>,
@@ -119,6 +143,8 @@ pub struct Query {
     timeout: std::time::Duration,
     #[serde(default)]
     version: HttpVersion,
+    basic_auth: Option<BasicAuth>,
+    bearer_auth: Option<String>,
     pre_hook: Option<crate::hook::Hook>,
     post_hook: Option<crate::hook::Hook>,
     body: Option<Body>,
@@ -409,6 +435,8 @@ struct PreparedQuery {
     timeout: std::time::Duration,
     #[serde(default)]
     version: HttpVersion,
+    basic_auth: Option<BasicAuth>,
+    bearer_auth: Option<String>,
     body: Option<UnpackedBody>,
 }
 
@@ -431,6 +459,8 @@ impl TryFrom<Query> for PreparedQuery {
                 args: query.args,
                 timeout: query.timeout,
                 version: query.version,
+                basic_auth: query.basic_auth,
+                bearer_auth: query.bearer_auth,
                 body: Some(body),
             })
         } else {
@@ -440,6 +470,8 @@ impl TryFrom<Query> for PreparedQuery {
                 headers: query.headers,
                 args: query.args,
                 timeout: query.timeout,
+                basic_auth: query.basic_auth,
+                bearer_auth: query.bearer_auth,
                 version: query.version,
                 body: None,
             })
@@ -466,7 +498,7 @@ impl PreparedQuery {
             .into_diagnostic()
             .wrap_err("Invalid headers")?;
         // TODO: add basic auth and bearer auth
-        // TODO: support for multipart
+        // TODO: support for multipar
         // TODO: support for form
         let builder = client
             .request(method, url)
@@ -476,6 +508,18 @@ impl PreparedQuery {
             .version(self.version.into());
         let builder = if let Some(body) = self.body {
             builder.body(body)
+        } else {
+            builder
+        };
+
+        let builder = if let Some(bearer_auth) = self.bearer_auth {
+            builder.bearer_auth(bearer_auth)
+        } else {
+            builder
+        };
+
+        let builder = if let Some(basic_auth) = self.basic_auth {
+            basic_auth.apply_request(builder)
         } else {
             builder
         };
@@ -493,6 +537,8 @@ impl PreparedQuery {
             headers,
             args,
             timeout,
+            basic_auth,
+            bearer_auth,
             version,
             body,
         } = self;
@@ -517,6 +563,11 @@ impl PreparedQuery {
             })
             .collect::<Result<_, subst::Error>>()?;
 
+        let basic_auth = basic_auth.map(|b| b.substitute(vars)).transpose()?;
+        let bearer_auth = bearer_auth
+            .map(|b| subst::substitute(&b, vars))
+            .transpose()?;
+
         Ok(Self {
             path,
             headers,
@@ -524,6 +575,8 @@ impl PreparedQuery {
             method,
             timeout,
             version,
+            basic_auth,
+            bearer_auth,
             body: body.map(|body| body.substitute(vars)).transpose()?,
         })
     }
@@ -561,7 +614,6 @@ fn is_extension_method(method: &reqwest::Method) -> bool {
 }
 
 fn display_request(request: &reqwest::Request) {
-    // TODO: format print request
     let method = request.method();
     let url = request.url().as_str();
     if is_extension_method(method) {
@@ -588,7 +640,6 @@ impl Response {
         info!("version: {:?}", response.version());
         let header_map = DisplayResponseHeaders(response.headers());
         info!("headers: {header_map}");
-        // TODO: display responnse headers and etc
         Ok(Self {
             status_code: response.status().into(),
             version: response
