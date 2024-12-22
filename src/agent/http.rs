@@ -220,7 +220,7 @@ impl Query {
         let post_hook_args = hook_args.next().unwrap_or(&[]);
 
         let prepared_query: PreparedQuery = self.try_into().wrap_err("Couldn't Create Query")?;
-        if cmd_args.debug_prehook {
+        if cmd_args.inspect_request {
             let body_buf = crate::hook::to_msgpack(&prepared_query)
                 .into_diagnostic()
                 .wrap_err("serializing input body")?;
@@ -260,7 +260,7 @@ impl Query {
             .await
             .wrap_err("Couldn't read response")?;
 
-        if cmd_args.debug_posthook {
+        if cmd_args.inspect_response {
             let body_buf = crate::hook::to_msgpack(&response)
                 .into_diagnostic()
                 .wrap_err("failed to serialize response")?;

@@ -41,8 +41,8 @@ export extern pigeon [
   --skip-hooks(-s)                  # don't run any hooks
       --skip-prehook                # don't run pre request hook
       --skip-posthook               # don't run post responnse hook
-      --debug-prehook               # stop before pre hook and write pre hook data to stdout. Useful for developing pre-hook
-      --debug-posthook              # stop before post hook and write post hook data to stdout. Useful for developing post-hook
+      --inspect-request             # stop before pre hook and write pre hook data to stdout. Useful for developing pre-hook
+      --inspect-response            # stop before post hook and write post hook data to stdout. Useful for developing post-hook
       --list-json                   # output collected services as json output
   --version(-V)                     # Print version
     ...endpoint : string@endpoint-path  # path specifier
