@@ -147,7 +147,9 @@ pub struct Query {
     bearer_auth: Option<String>,
     pre_hook: Option<crate::hook::Hook>,
     post_hook: Option<crate::hook::Hook>,
-    body: Option<Body>,
+    body: Option<TaggedBody>,
+    form: Option<HashMap<String, String>>,
+    multipart: Option<HashMap<String, Part>>,
 }
 
 impl Query {
@@ -322,9 +324,71 @@ impl From<UnpackedBody> for reqwest::Body {
     }
 }
 
+/// unpacked version of multiparts Part type
+/// all file contents are extracted
+#[derive(Debug, Deserialize, Serialize)]
+struct MultiPartUnPacked {
+    body: UnpackedBody,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    file_name: Option<String>,
+}
+
+impl MultiPartUnPacked {
+    fn substitute(self, vars: &HashMap<String, String>) -> Result<Self, subst::Error> {
+        let Self {
+            body,
+            headers,
+            file_name,
+        } = self;
+        let headers = headers
+            .into_iter()
+            .map(|(key, value)| {
+                let key = subst::substitute(&key, vars)?;
+                let val = subst::substitute(&value, vars)?;
+                Ok((key, val))
+            })
+            .collect::<Result<_, subst::Error>>()?;
+        let file_name = file_name
+            .map(|name| subst::substitute(&name, vars))
+            .transpose()?;
+        Ok(Self {
+            body: body.substitute(vars)?,
+            headers,
+            file_name,
+        })
+    }
+}
+
+/// multipart value struct
+#[derive(Debug, Deserialize, Clone, Serialize)]
+struct Part {
+    body: TaggedBody,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    file_name: Option<String>,
+}
+
+impl Part {
+    fn unpack(self) -> miette::Result<MultiPartUnPacked> {
+        let Self {
+            body,
+            mut headers,
+            file_name,
+        } = self;
+        let (content_type, body) = body.unpack()?;
+        headers.insert(reqwest::header::CONTENT_TYPE.to_string(), content_type);
+        Ok(MultiPartUnPacked {
+            body,
+            headers,
+            file_name,
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Body {
+enum TaggedBody {
     #[serde(rename = "application/json")]
     ApplicationJson(Content<String>),
     Raw {
@@ -337,10 +401,10 @@ enum Body {
     },
 }
 
-impl Body {
+impl TaggedBody {
     fn unpack(self) -> miette::Result<(String, UnpackedBody)> {
         match self {
-            Body::ApplicationJson(content) => {
+            TaggedBody::ApplicationJson(content) => {
                 let val = content
                     .get_value()
                     .wrap_err("Couldn't extract application/json body")?;
@@ -349,13 +413,13 @@ impl Body {
                     UnpackedBody::Utf8(val),
                 ))
             }
-            Body::Raw { content_type, data } => {
+            TaggedBody::Raw { content_type, data } => {
                 let val = data
                     .get_value()
                     .wrap_err("Couldn't extract application/json body")?;
                 Ok((content_type, UnpackedBody::Raw(val)))
             }
-            Body::RawText { content_type, data } => {
+            TaggedBody::RawText { content_type, data } => {
                 let val = data
                     .get_value()
                     .wrap_err("Couldn't extract application/json body")?;
@@ -423,6 +487,7 @@ impl<T: FromBytes> Content<T> {
     }
 }
 
+/// Query generated keeping required parts of Query which are required for generating query
 #[derive(Debug, Serialize, Deserialize)]
 struct PreparedQuery {
     path: String,
@@ -438,44 +503,50 @@ struct PreparedQuery {
     basic_auth: Option<BasicAuth>,
     bearer_auth: Option<String>,
     body: Option<UnpackedBody>,
+    form: Option<HashMap<String, String>>,
+    multipart: Option<HashMap<String, MultiPartUnPacked>>,
 }
 
 impl TryFrom<Query> for PreparedQuery {
     type Error = miette::Error;
 
     fn try_from(query: Query) -> Result<Self, Self::Error> {
-        if let Some((content_type, body)) = query
+        let mut headers = query.headers;
+        let body = query
             .body
-            .map(|b| b.unpack())
+            .map(|tagged_body| -> miette::Result<_> {
+                let (content_type, unpacked_body) = tagged_body.unpack()?;
+                headers.insert(reqwest::header::CONTENT_TYPE.to_string(), content_type);
+                Ok(unpacked_body)
+            })
             .transpose()
-            .wrap_err("Couldn't unpack request body")?
-        {
-            let mut headers = query.headers;
-            headers.insert(reqwest::header::CONTENT_TYPE.to_string(), content_type);
-            Ok(Self {
-                path: query.path,
-                method: query.method,
-                headers,
-                args: query.args,
-                timeout: query.timeout,
-                version: query.version,
-                basic_auth: query.basic_auth,
-                bearer_auth: query.bearer_auth,
-                body: Some(body),
+            .wrap_err("Couldn't unpack request body")?;
+        let multipart = query
+            .multipart
+            .map(|m| {
+                m.into_iter()
+                    .map(|(k, part)| {
+                        let unpacked_part = part.unpack()?;
+
+                        Ok((k, unpacked_part))
+                    })
+                    .collect::<Result<HashMap<_, _>, miette::Error>>()
+                    .wrap_err("Couldn't unpack request")
             })
-        } else {
-            Ok(Self {
-                path: query.path,
-                method: query.method,
-                headers: query.headers,
-                args: query.args,
-                timeout: query.timeout,
-                basic_auth: query.basic_auth,
-                bearer_auth: query.bearer_auth,
-                version: query.version,
-                body: None,
-            })
-        }
+            .transpose()?;
+        Ok(Self {
+            path: query.path,
+            method: query.method,
+            headers,
+            args: query.args,
+            timeout: query.timeout,
+            version: query.version,
+            basic_auth: query.basic_auth,
+            bearer_auth: query.bearer_auth,
+            body,
+            form: query.form,
+            multipart,
+        })
     }
 }
 
@@ -497,9 +568,6 @@ impl PreparedQuery {
             .try_into()
             .into_diagnostic()
             .wrap_err("Invalid headers")?;
-        // TODO: add basic auth and bearer auth
-        // TODO: support for multipar
-        // TODO: support for form
         let builder = client
             .request(method, url)
             .headers(headers)
@@ -524,6 +592,46 @@ impl PreparedQuery {
             builder
         };
 
+        let builder = if let Some(form) = self.form {
+            builder.form(&form)
+        } else {
+            builder
+        };
+
+        let builder = if let Some(multipart) = self.multipart {
+            let form = multipart
+                .into_iter()
+                .try_fold(
+                    reqwest::multipart::Form::new(),
+                    |form, (name, part)| -> miette::Result<reqwest::multipart::Form> {
+                        let MultiPartUnPacked {
+                            body,
+                            headers,
+                            file_name,
+                        } = part;
+                        let part = match body {
+                            UnpackedBody::Utf8(c) => reqwest::multipart::Part::text(c),
+                            UnpackedBody::Raw(vec) => reqwest::multipart::Part::bytes(vec),
+                        };
+                        let part = if let Some(file_name) = file_name {
+                            part.file_name(file_name)
+                        } else {
+                            part
+                        };
+                        let headers = (&headers)
+                            .try_into()
+                            .into_diagnostic()
+                            .wrap_err("Invalid headers")?;
+                        let part = part.headers(headers);
+                        Ok(form.part(name, part))
+                    },
+                )
+                .wrap_err("Couldn't construct multiform request")?;
+            builder.multipart(form)
+        } else {
+            builder
+        };
+
         builder
             .build()
             .into_diagnostic()
@@ -541,6 +649,8 @@ impl PreparedQuery {
             bearer_auth,
             version,
             body,
+            form,
+            multipart,
         } = self;
         let path = subst::substitute(&path, vars)?;
         let method = subst::substitute(&method, vars)?;
@@ -568,6 +678,30 @@ impl PreparedQuery {
             .map(|b| subst::substitute(&b, vars))
             .transpose()?;
 
+        let form = form
+            .map(|form| {
+                form.into_iter()
+                    .map(|(key, value)| {
+                        let key = subst::substitute(&key, vars)?;
+                        let val = subst::substitute(&value, vars)?;
+                        Ok((key, val))
+                    })
+                    .collect::<Result<_, subst::Error>>()
+            })
+            .transpose()?;
+
+        let multipart = multipart
+            .map(|form| {
+                form.into_iter()
+                    .map(|(key, value)| {
+                        let key = subst::substitute(&key, vars)?;
+                        let val = value.substitute(vars)?;
+                        Ok((key, val))
+                    })
+                    .collect::<Result<_, subst::Error>>()
+            })
+            .transpose()?;
+
         Ok(Self {
             path,
             headers,
@@ -578,6 +712,8 @@ impl PreparedQuery {
             basic_auth,
             bearer_auth,
             body: body.map(|body| body.substitute(vars)).transpose()?,
+            form,
+            multipart,
         })
     }
 }
