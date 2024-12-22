@@ -1,3 +1,4 @@
+use core::str;
 use std::{collections::HashMap, io::Read, ops::Deref, str::FromStr};
 
 use miette::{Context, IntoDiagnostic};
@@ -759,7 +760,19 @@ fn display_request(request: &reqwest::Request) {
         info!("[{method}]: {url}");
     }
     let headers = DisplayRequestHeaders(request.headers());
-    info!("headers: {headers}",)
+    info!("headers: {headers}");
+
+    if let Some(body) = request.body() {
+        if let Some(body_bytes) = body.as_bytes().map(str::from_utf8) {
+            if let Ok(decoded_body) = body_bytes {
+                info!("body: {decoded_body}")
+            } else {
+                info!("body: {body_bytes:x?}")
+            }
+        } else {
+            info!("body: Streaming data, body cannot be displayed")
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
