@@ -4,7 +4,7 @@ mod hook;
 mod parser;
 mod store;
 
-use std::io::Write;
+use std::io::{IsTerminal, Read, Write};
 
 use clap::Parser;
 use miette::{Context, IntoDiagnostic};
@@ -27,11 +27,6 @@ struct Arguments {
     // write output to given file
     #[arg(short, long)]
     output: Option<std::path::PathBuf>,
-
-    // Take the input body from given file
-    // - will read from std in
-    #[arg(short, long)]
-    input: Option<std::path::PathBuf>,
 
     /// list available options (services/endpoints)
     #[arg(short, long)]
@@ -144,8 +139,25 @@ async fn main() -> miette::Result<()> {
                 miette::bail!("Couldn't find query")
             }
         };
+
+        let mut stdin_buffer = Vec::new();
+        let mut stdin = std::io::stdin();
+        // if the input is from pipe then consider else, don't wait for input
+        let stdin_body = if !stdin.is_terminal() {
+            let read_bytes = stdin
+                .read_to_end(&mut stdin_buffer)
+                .into_diagnostic()
+                .wrap_err("Couldn't read stdin")?;
+            if read_bytes > 0 {
+                Some(&stdin_buffer[..read_bytes])
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let response_body = query_result
-            .exec_with_args(&args, &env, &config_store)
+            .exec_with_args(&args, &env, &config_store, stdin_body)
             .await?;
 
         if let Some(body) = response_body {

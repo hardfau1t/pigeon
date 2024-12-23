@@ -313,6 +313,7 @@ impl QuerySearchResult {
         args: &crate::Arguments,
         env: &str,
         store: &crate::store::Store,
+        stdin: Option<&[u8]>,
     ) -> miette::Result<Option<QueryResponse>> {
         match self {
             QuerySearchResult::Http {
@@ -326,7 +327,7 @@ impl QuerySearchResult {
                         "Couldn't find environment {env}, available are {available_env:?}"
                     )
                 };
-                query.execute(env, store, args).await
+                query.execute(env, store, args, stdin).await
             }
         }
     }

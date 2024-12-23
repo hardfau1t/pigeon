@@ -131,6 +131,14 @@ impl BasicAuth {
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+enum StdinBody {
+    Tagged(TaggedBody),
+    Form(HashMap<String, String>),
+    Multipart(HashMap<String, Part>),
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Query {
     description: Option<String>,
@@ -170,6 +178,7 @@ impl Query {
         environ: Environment,
         store: &crate::store::Store,
         cmd_args: &crate::Arguments,
+        stdin: Option<&[u8]>,
     ) -> miette::Result<Option<crate::parser::QueryResponse>> {
         trace!("Merging Query wit env");
         let Environment {
@@ -218,6 +227,17 @@ impl Query {
         let mut hook_args = cmd_args.args.split(|flag| flag == "--");
         let pre_hook_args = hook_args.next().unwrap_or(&[]);
         let post_hook_args = hook_args.next().unwrap_or(&[]);
+
+        if let Some(stdin) = stdin {
+            let stdin_body = rmp_serde::decode::from_slice::<StdinBody>(stdin)
+                .into_diagnostic()
+                .wrap_err("Couldn't deserialize stdin as body")?;
+            match stdin_body {
+                StdinBody::Tagged(tagged_body) => self.body = Some(tagged_body),
+                StdinBody::Form(hash_map) => self.form = Some(hash_map),
+                StdinBody::Multipart(hash_map) => self.multipart = Some(hash_map),
+            }
+        }
 
         let prepared_query: PreparedQuery = self.try_into().wrap_err("Couldn't Create Query")?;
         if cmd_args.inspect_request {
