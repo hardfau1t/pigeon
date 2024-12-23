@@ -180,11 +180,9 @@ impl Group {
         let e = toml::from_str(file_content.as_str());
         match e {
             Ok(o) => Ok(o),
-            Err(e) => {
-                Err(e)
-                    .into_diagnostic()
-                    .wrap_err_with(|| format!("Couldn't deserialize {:?}", path.as_ref()))
-            }
+            Err(e) => Err(e)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("Couldn't deserialize {:?}", path.as_ref())),
         }
     }
 

@@ -9,6 +9,7 @@ port = 8080
 scheme = "http"
 host = "localhost"
 port = 80
+prefix = "/basic-auth/"
 
 [environment.staging]
 scheme = "https"
@@ -47,7 +48,7 @@ body.raw = { content_type = "raw/data", data.file = '''./example-body/blob''' }
 
 [query.basic_auth]
 description = "basic auth example"
-path = "/basic-auth/user/pass"
+path = "user/pass"
 method = "GET"
 basic_auth = { user_name = "user", password = "pass" }
 

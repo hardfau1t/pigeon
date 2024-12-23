@@ -202,7 +202,6 @@ impl Query {
         } else {
             format!("{scheme}://{host}")
         };
-        debug!(url = url_str, "Constructed Base Url");
 
         let url = reqwest::Url::parse(&url_str)
             .into_diagnostic()
@@ -213,10 +212,7 @@ impl Query {
                 .wrap_err_with(|| format!("Couldn't append environment prefix: {prefix}"))?
         } else {
             url
-        }
-        .join(&self.path)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("Couldn't append path {}", self.path))?;
+        };
 
         debug!(url = ?base_url, "Costructed base Url");
         let mut local_store = store.deref().clone();
