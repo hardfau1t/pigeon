@@ -20,11 +20,12 @@ export def endpoint-path [context: string] {
 
     let half_completed_flag = if $half_completed  { $ep_path_params | last } else { "" }
 
-    ^pigeon --list-json ...$complete_params
+    let query_map = ^pigeon --list-json ...$complete_params
     | from json 
-    | get group 
-    | get sub_groups queries
-    | columns
+    | get group
+    let groups = $query_map.sub_groups | columns
+    let queries = $query_map.queries.query? | default {} | columns
+    $groups ++ $queries
     | filter {|op| $op | str starts-with $half_completed_flag } # give only words which starts with half completed flags
 
 }
