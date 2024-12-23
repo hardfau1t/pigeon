@@ -177,9 +177,15 @@ impl Group {
             .into_diagnostic()
             .wrap_err_with(|| format!("Couldn't read file: {:?}", path.as_ref()))?;
 
-        toml::from_str(file_content.as_str())
-            .into_diagnostic()
-            .wrap_err_with(|| format!("Couldn't deserialize {:?}", path.as_ref()))
+        let e = toml::from_str(file_content.as_str());
+        match e {
+            Ok(o) => Ok(o),
+            Err(e) => {
+                Err(e)
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("Couldn't deserialize {:?}", path.as_ref()))
+            }
+        }
     }
 
     /// unsure about the path, it could be directory in which case it doesn't contains any environments or queries
@@ -204,8 +210,8 @@ impl Group {
             debug!("empty search query, showing top level groups");
             return Some(SearchResult {
                 name: None,
-                sub_query: None,
-                sub_group: Some(GroupSearchResult {
+                query: None,
+                group: Some(GroupSearchResult {
                     queries: &self.info,
                     sub_groups: &self.sub_groups,
                 }),
@@ -226,8 +232,8 @@ impl Group {
             }
             Some(SearchResult {
                 name: Some(key.as_ref()),
-                sub_query,
-                sub_group,
+                query: sub_query,
+                group: sub_group,
             })
         } else {
             trace!("finding group with name {}", key.as_ref());
@@ -236,7 +242,7 @@ impl Group {
 
             // if one of the subgroup finds None then popout that None
             let mut qset = sub_group.find(rest)?;
-            if let Some(ref mut qresult) = qset.sub_query {
+            if let Some(ref mut qresult) = qset.query {
                 qresult.apply_group_env(&self.info);
             }
             Some(qset)
@@ -382,18 +388,18 @@ fn default_table_structure() -> comfy_table::Table {
 #[derive(Debug, Serialize)]
 pub struct SearchResult<'g, 'i> {
     pub name: Option<&'i str>,
-    pub sub_query: Option<QuerySearchResult>,
-    pub sub_group: Option<GroupSearchResult<'g>>,
+    pub query: Option<QuerySearchResult>,
+    pub group: Option<GroupSearchResult<'g>>,
 }
 
 impl<'i> SearchResult<'_, 'i> {
     pub fn format_print(&'i self) {
-        if let Some(query) = &self.sub_query {
+        if let Some(query) = &self.query {
             let name = self.name.expect("name cannot be None for matched query");
             eprintln!("Query: \"{}\"", name.green().bold().bright());
             query.format_print();
         };
-        if let Some(group) = &self.sub_group {
+        if let Some(group) = &self.group {
             if !group.sub_groups.is_empty() {
                 if let Some(name) = self.name {
                     eprintln!("\"{}\" Sub Groups", name.green().bold().bright());

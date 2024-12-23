@@ -1,4 +1,4 @@
-def endpoint-path [context: string] {
+export def endpoint-path [context: string] {
     # for inline exported variables like `key=value pigeon` ast is wierd
     let context = $context | str replace -a -r '\w+=\w+' ''
     let ep_path_params = ast $context -j
@@ -22,8 +22,8 @@ def endpoint-path [context: string] {
 
     ^pigeon --list-json ...$complete_params
     | from json 
-    | get sub_group 
-    | get sub_groups queries.query 
+    | get group 
+    | get sub_groups queries
     | columns
     | filter {|op| $op | str starts-with $half_completed_flag } # give only words which starts with half completed flags
 

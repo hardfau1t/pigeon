@@ -132,7 +132,7 @@ async fn main() -> miette::Result<()> {
 
         debug!("current config: {config_store:?}");
 
-        let Some(query_result) = query_set.sub_query else {
+        let Some(query_result) = query_set.query else {
             if let Some(name) = query_set.name {
                 miette::bail!("{name} is not an query")
             } else {
