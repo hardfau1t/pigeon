@@ -8,5 +8,5 @@ def main [] {
         | to json -r
     }
     | to msgpack
-    | ^cat
+    | ^cat # problem with nu that output of a script is given to stdout as it is, binary should have been converted to raw data
 }
