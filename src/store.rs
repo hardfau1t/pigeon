@@ -88,7 +88,10 @@ impl Store {
 
     /// open the store and overwrite values with environment variables and insert new
     #[instrument(skip(package))]
-    pub fn with_env(package: &impl AsRef<std::path::Path>, current_env: String) -> Result<Self, StoreError> {
+    pub fn with_env(
+        package: &impl AsRef<std::path::Path>,
+        current_env: String,
+    ) -> Result<Self, StoreError> {
         trace!("Creating store with environment");
         let mut store = Self::open(package, current_env)?;
         store.config.extend(std::env::vars());
@@ -136,6 +139,8 @@ impl Drop for Store {
                 }
             })
         }
+        let env_store = self.config.drain().collect();
+
         let mut store = match read_env_store(&self.package) {
             Ok(store) => store,
             Err(e) => {
@@ -143,8 +148,7 @@ impl Drop for Store {
                 return;
             }
         };
-        let per_env_store = store.entry(self.current_env.clone()).or_default();
-        per_env_store.extend(self.config.drain());
+        store.insert(self.current_env.clone(), env_store);
 
         let Ok(serialized_config) = toml::to_string(&store) else {
             warn!("Failed to serialize the config store, not writing to disk");

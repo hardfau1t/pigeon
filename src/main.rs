@@ -8,7 +8,7 @@ use std::io::{IsTerminal, Read, Write};
 
 use clap::Parser;
 use miette::{Context, IntoDiagnostic};
-use tracing::debug;
+use tracing::{debug, info, warn};
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, clap::Parser)]
@@ -20,6 +20,18 @@ struct Arguments {
     /// configuration file containing queries
     #[arg(short, long, default_value = "./pigeon.toml")]
     config_file: std::path::PathBuf,
+
+    /// set environment variable(doesn't set in current shell)
+    /// example: --set key=value
+    /// to unset a value, just don't include value
+    /// example: --set key
+    #[arg(long)]
+    set: Option<String>,
+
+    /// get environment variable
+    #[arg(long)]
+    get: Option<String>,
+
     /// don't store changes to config store back to disk
     #[arg(short('p'), long("no-persistent"))]
     no_persistent: bool,
@@ -65,7 +77,7 @@ struct Arguments {
     #[arg(long("list-json"), conflicts_with("list"))]
     list_json: bool,
 
-    #[arg(required_unless_present_any(["list", "list_json"]))]
+    #[arg(required_unless_present_any(["list", "list_json", "get", "set"]))]
     endpoint: Vec<String>,
     /// arguments for hooks, note to make it unamgious add -- before providing any flags
     /// add another -- separator to separate between prehook flags and post hook flags
@@ -100,79 +112,104 @@ async fn main() -> miette::Result<()> {
 
     let config = parser::Config::open(&args.config_file)?;
 
-    let groups = parser::Group::from_dir(config.api_directory)?;
+    let env = match args.environment {
+        Some(ref v) => v.clone(),
+        None => std::env::var(constants::KEY_CURRENT_ENVIRONMENT)
+            .into_diagnostic()
+            .wrap_err_with(|| {
+                format!(
+                    "Couldn't get environment,{} ",
+                    constants::KEY_CURRENT_ENVIRONMENT
+                )
+            })?,
+    };
 
-    debug!(query_set=?groups, "parsed services");
+    let mut config_store = crate::store::Store::with_env(&config.project, env.clone())
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Couldn't read store values of {}", config.project))?;
 
-    let query_set = groups
-        .find(&args.endpoint)
-        .ok_or_else(|| miette::miette!("no such query or group found"))?;
+    config_store.persistent(!args.no_persistent);
 
-    if args.list || args.list_json {
-        debug!(found=?query_set, "found query/group");
-        if args.list_json {
-            query_set.json_print()?;
+    debug!("current config: {config_store:?}");
+
+    if let Some(key) = args.get {
+        let Some(val) = config_store.get(&key) else {
+            miette::bail!("Couldn't find {key} in store")
+        };
+        print!("{val}");
+    } else if let Some(key_val_pair) = args.set {
+        let mut key_val_split = key_val_pair.split('=');
+        let key = key_val_split
+            .next()
+            .ok_or(miette::miette!("Empty key value set"))?;
+        if let Some(value) = key_val_split.next() {
+            info!("Setting \"{key}=\"=\"{value}\"");
+            config_store.insert(key.to_string(), value.to_string());
         } else {
-            query_set.format_print();
+            if let Some(value) = config_store.remove(key) {
+                info!("Removed \"{key}\" = \"{value}\"");
+            } else {
+                warn!("Value for {key} not found, not removing")
+            }
         }
     } else {
-        let env = match args.environment {
-            Some(ref v) => v.clone(),
-            None => std::env::var(constants::KEY_CURRENT_ENVIRONMENT)
-                .into_diagnostic()
-                .wrap_err_with(|| {
-                    format!(
-                        "Couldn't get environment,{} ",
-                        constants::KEY_CURRENT_ENVIRONMENT
-                    )
-                })?,
-        };
-        let mut config_store = crate::store::Store::with_env(&config.project, env.clone())
-            .into_diagnostic()
-            .wrap_err_with(|| format!("Couldn't read store values of {}", config.project))?;
+        let groups = parser::Group::from_dir(config.api_directory)?;
 
-        config_store.persistent(!args.no_persistent);
+        debug!(query_set=?groups, "parsed services");
 
-        debug!("current config: {config_store:?}");
+        let query_set = groups
+            .find(&args.endpoint)
+            .ok_or_else(|| miette::miette!("no such query or group found"))?;
 
-        let Some(query_result) = query_set.query else {
-            if let Some(name) = query_set.name {
-                miette::bail!("{name} is not an query")
+        if args.list || args.list_json {
+            debug!(found=?query_set, "found query/group");
+            if args.list_json {
+                query_set.json_print()?;
             } else {
-                miette::bail!("Couldn't find query")
-            }
-        };
-
-        let mut stdin_buffer = Vec::new();
-        let mut stdin = std::io::stdin();
-        // if the input is from pipe then consider else, don't wait for input
-        let stdin_body = if !stdin.is_terminal() {
-            let read_bytes = stdin
-                .read_to_end(&mut stdin_buffer)
-                .into_diagnostic()
-                .wrap_err("Couldn't read stdin")?;
-            if read_bytes > 0 {
-                Some(&stdin_buffer[..read_bytes])
-            } else {
-                None
+                query_set.format_print();
             }
         } else {
-            None
-        };
-        let response_body = query_result
-            .exec_with_args(&args, &env, &mut config_store, stdin_body)
-            .await?;
+            let Some(query_result) = query_set.query else {
+                if let Some(name) = query_set.name {
+                    miette::bail!("{name} is not an query")
+                } else {
+                    miette::bail!("Couldn't find query")
+                }
+            };
 
-        if let Some(body) = response_body {
-            if let Some(output_file) = args.output {
-                std::fs::write(&output_file, body)
+            let mut stdin_buffer = Vec::new();
+            let mut stdin = std::io::stdin();
+            // if the input is from pipe then consider else, don't wait for input
+            let stdin_body = if !stdin.is_terminal() {
+                let read_bytes = stdin
+                    .read_to_end(&mut stdin_buffer)
                     .into_diagnostic()
-                    .wrap_err_with(|| format!("Failed to write response body to {output_file:?}"))?
+                    .wrap_err("Couldn't read stdin")?;
+                if read_bytes > 0 {
+                    Some(&stdin_buffer[..read_bytes])
+                } else {
+                    None
+                }
             } else {
-                std::io::stdout()
-                    .write_all(&body)
-                    .into_diagnostic()
-                    .wrap_err("Failed to write body to stdout")?
+                None
+            };
+            let response_body = query_result
+                .exec_with_args(&args, &env, &mut config_store, stdin_body)
+                .await?;
+
+            if let Some(body) = response_body {
+                if let Some(output_file) = args.output {
+                    std::fs::write(&output_file, body)
+                        .into_diagnostic()
+                        .wrap_err_with(|| {
+                            format!("Failed to write response body to {output_file:?}")
+                        })?
+                } else {
+                    std::io::stdout()
+                        .write_all(&body)
+                        .into_diagnostic()
+                        .wrap_err("Failed to write body to stdout")?
+                }
             }
         }
     }
