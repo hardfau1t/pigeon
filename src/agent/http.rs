@@ -1,10 +1,5 @@
 use core::str;
-use std::{
-    collections::HashMap,
-    io::Read,
-    ops::{Deref, DerefMut},
-    str::FromStr,
-};
+use std::{collections::HashMap, io::Read, ops::DerefMut, str::FromStr};
 
 use miette::{Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
@@ -220,7 +215,7 @@ impl Query {
         };
 
         debug!(url = ?base_url, "Costructed base Url");
-        let mut local_store = store.deref().clone();
+        let mut local_store = std::ops::Deref::deref(store).clone();
         local_store.extend(env_store);
 
         let pre_hook = self.pre_hook.take();
@@ -294,8 +289,8 @@ impl Query {
             .transpose()
             .wrap_err("Failed to run post hook")?
             .unwrap_or(response);
-        if !response.config.is_empty() {
-            store.deref_mut().extend(response.config.drain());
+        if !response.store.is_empty() {
+            store.deref_mut().extend(response.store.drain());
         }
 
         Ok(response.into())
@@ -804,7 +799,7 @@ struct Response {
     status_code: u16,
     version: HttpVersion,
     headers: HashMap<String, String>,
-    config: HashMap<String, String>,
+    store: HashMap<String, String>,
     body: Vec<u8>,
 }
 
@@ -839,7 +834,7 @@ impl Response {
                 .into_diagnostic()
                 .wrap_err("Couldn't read response body")?
                 .into(),
-            config: HashMap::new(),
+            store: HashMap::new(),
         })
     }
 }
