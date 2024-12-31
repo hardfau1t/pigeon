@@ -157,7 +157,7 @@ async fn main() -> miette::Result<()> {
             None
         };
         let response_body = query_result
-            .exec_with_args(&args, &env, &config_store, stdin_body)
+            .exec_with_args(&args, &env, &mut config_store, stdin_body)
             .await?;
 
         if let Some(body) = response_body {

@@ -1,5 +1,10 @@
 use core::str;
-use std::{collections::HashMap, io::Read, ops::Deref, str::FromStr};
+use std::{
+    collections::HashMap,
+    io::Read,
+    ops::{Deref, DerefMut},
+    str::FromStr,
+};
 
 use miette::{Context, IntoDiagnostic};
 use serde::{Deserialize, Serialize};
@@ -176,7 +181,7 @@ impl Query {
     pub async fn execute(
         mut self,
         environ: Environment,
-        store: &crate::store::Store,
+        store: &mut crate::store::Store,
         cmd_args: &crate::Arguments,
         stdin: Option<&[u8]>,
     ) -> miette::Result<Option<crate::parser::QueryResponse>> {
@@ -283,12 +288,15 @@ impl Query {
             return Ok(Some(body_buf));
         }
 
-        let response = post_hook
+        let mut response = post_hook
             .filter(|_| !(cmd_args.skip_hooks || cmd_args.skip_posthook))
             .map(|hook| hook.run(&response, post_hook_args))
             .transpose()
             .wrap_err("Failed to run post hook")?
             .unwrap_or(response);
+        if !response.config.is_empty() {
+            store.deref_mut().extend(response.config.drain());
+        }
 
         Ok(response.into())
     }
@@ -796,6 +804,7 @@ struct Response {
     status_code: u16,
     version: HttpVersion,
     headers: HashMap<String, String>,
+    config: HashMap<String, String>,
     body: Vec<u8>,
 }
 
@@ -830,6 +839,7 @@ impl Response {
                 .into_diagnostic()
                 .wrap_err("Couldn't read response body")?
                 .into(),
+            config: HashMap::new(),
         })
     }
 }

@@ -316,7 +316,7 @@ impl QuerySearchResult {
         self,
         args: &crate::Arguments,
         env: &str,
-        store: &crate::store::Store,
+        store: &mut crate::store::Store,
         stdin: Option<&[u8]>,
     ) -> miette::Result<Option<QueryResponse>> {
         match self {
