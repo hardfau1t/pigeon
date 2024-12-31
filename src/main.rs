@@ -21,14 +21,14 @@ struct Arguments {
     #[arg(short, long, default_value = "./pigeon.toml")]
     config_file: std::path::PathBuf,
 
-    /// set environment variable(doesn't set in current shell)
+    /// set store variable(doesn't set in current shell)
     /// example: --set key=value
     /// to unset a value, just don't include value
     /// example: --set key
     #[arg(long)]
     set: Option<String>,
 
-    /// get environment variable
+    /// get store variable
     #[arg(long)]
     get: Option<String>,
 
