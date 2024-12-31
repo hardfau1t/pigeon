@@ -116,15 +116,18 @@ async fn main() -> miette::Result<()> {
             query_set.format_print();
         }
     } else {
-        let env = std::env::var(constants::KEY_CURRENT_ENVIRONMENT)
-            .into_diagnostic()
-            .wrap_err_with(|| {
-                format!(
-                    "Couldn't get environment,{} ",
-                    constants::KEY_CURRENT_ENVIRONMENT
-                )
-            })?;
-        let mut config_store = crate::store::Store::with_env(&config.project)
+        let env = match args.environment {
+            Some(ref v) => v.clone(),
+            None => std::env::var(constants::KEY_CURRENT_ENVIRONMENT)
+                .into_diagnostic()
+                .wrap_err_with(|| {
+                    format!(
+                        "Couldn't get environment,{} ",
+                        constants::KEY_CURRENT_ENVIRONMENT
+                    )
+                })?,
+        };
+        let mut config_store = crate::store::Store::with_env(&config.project, env.clone())
             .into_diagnostic()
             .wrap_err_with(|| format!("Couldn't read store values of {}", config.project))?;
 

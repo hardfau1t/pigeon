@@ -88,9 +88,8 @@ impl Store {
 
     /// open the store and overwrite values with environment variables and insert new
     #[instrument(skip(package))]
-    pub fn with_env(package: &impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
+    pub fn with_env(package: &impl AsRef<std::path::Path>, current_env: String) -> Result<Self, StoreError> {
         trace!("Creating store with environment");
-        let current_env = std::env::var(crate::constants::KEY_CURRENT_ENVIRONMENT)?;
         let mut store = Self::open(package, current_env)?;
         store.config.extend(std::env::vars());
         store.used_with_env = true;
