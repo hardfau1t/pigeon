@@ -37,13 +37,13 @@ pre_hook.script = "./example-hooks/httpbin/post.nu"
 description = "patch xml data"
 path = "/patch"
 method = "PATCH"
-body.raw_text = { content_type = "application/xml", data.inline = '''<a>content</a>''' }
+body.raw_text = { content_type = "application/xml", inline = '''<a>content</a>''' }
 
 [query.put]
 description = "put raw binary blob"
 path = "/put"
 method = "PUT"
-body.raw = { content_type = "raw/data", data.file = '''./example-body/blob''' }
+body.raw = { content_type = "raw/data", file = '''./example-body/blob''' }
 post_hook.script = "./example-hooks/httpbin/put.nu"
 
 [query.basic_auth]
@@ -76,7 +76,7 @@ path = "/post"
 method = "POST"
 [query.multipart.multipart ]
 part1 = { file_name = "key1_file", body."application/json".inline = '{"a": "b"}' }
-part2 = { body.raw_text = {content_type = "text/plain", data.inline = 'this is some random text'} }
+part2 = { body.raw_text = {content_type = "text/plain", inline = 'this is some random text'} }
 part3 = { headers = {"headerk1" = "headerv1"}, body."application/json".inline = '{"a": "b"}' }
 
 [group.methods]

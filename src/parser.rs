@@ -51,7 +51,7 @@ impl Config {
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum GroupInfo {
+enum GroupContent {
     Http {
         #[serde(default, rename = "query")]
         queries: HashMap<String, agent::http::Query>,
@@ -61,10 +61,10 @@ enum GroupInfo {
     Generic,
 }
 
-impl GroupInfo {
+impl GroupContent {
     fn find_query(&self, name: &str) -> Option<QuerySearchResult> {
         match self {
-            GroupInfo::Http {
+            GroupContent::Http {
                 queries,
                 environments,
             } => {
@@ -74,12 +74,12 @@ impl GroupInfo {
                     query: q.clone(),
                 })
             }
-            GroupInfo::Generic => None,
+            GroupContent::Generic => None,
         }
     }
     fn format_print(&self, my_name: &Option<impl std::fmt::Debug>) {
         match self {
-            GroupInfo::Http { queries, .. } => {
+            GroupContent::Http { queries, .. } => {
                 if !queries.is_empty() {
                     let mut subq_table = default_table_structure();
                     if let Some(name) = my_name {
@@ -98,12 +98,14 @@ impl GroupInfo {
                     eprintln!("{subq_table}");
                 }
             }
-            GroupInfo::Generic => todo!(),
+            GroupContent::Generic => {
+                eprintln!("Generic group there are no queries")
+            }
         }
     }
 }
 
-impl Default for GroupInfo {
+impl Default for GroupContent {
     fn default() -> Self {
         Self::Generic
     }
@@ -115,7 +117,7 @@ pub struct Group {
     sub_groups: HashMap<String, Group>,
     // TODO: This will cause error if the file doesn't have `type`, eventhough default it is generic
     #[serde(flatten)]
-    info: GroupInfo,
+    info: GroupContent,
 }
 
 impl Group {
@@ -252,10 +254,10 @@ impl Group {
     }
     fn to_row(&self) -> Vec<String> {
         match &self.info {
-            GroupInfo::Http { .. } => {
+            GroupContent::Http { .. } => {
                 vec!["http".to_string()]
             }
-            GroupInfo::Generic => vec!["generic".to_string()],
+            GroupContent::Generic => vec!["generic".to_string()],
         }
     }
 }
@@ -269,11 +271,11 @@ pub enum QuerySearchResult {
 }
 
 impl QuerySearchResult {
-    fn apply_group_env(&mut self, group: &GroupInfo) {
+    fn apply_group_env(&mut self, group: &GroupContent) {
         match (self, group) {
             (
                 QuerySearchResult::Http { environments, .. },
-                GroupInfo::Http {
+                GroupContent::Http {
                     environments: parent_env,
                     ..
                 },
@@ -285,7 +287,7 @@ impl QuerySearchResult {
                         .or_insert_with(|| parent_env.clone()); // there is no such env so just copy parent env
                 });
             }
-            (_, GroupInfo::Generic) => debug!("parent group is generic group, ignoring"),
+            (_, GroupContent::Generic) => debug!("parent group is generic group, ignoring"),
         }
     }
 
@@ -345,7 +347,7 @@ pub type QueryResponse = Vec<u8>;
 pub struct GroupSearchResult<'g> {
     /// search result can optionally contain a group
     sub_groups: &'g HashMap<String, Group>,
-    queries: &'g GroupInfo,
+    queries: &'g GroupContent,
 }
 
 impl<'g> From<&'g Group> for GroupSearchResult<'g> {
@@ -429,7 +431,7 @@ mod tests {
             g,
             Group {
                 sub_groups: HashMap::new(),
-                info: GroupInfo::Generic
+                info: GroupContent::Generic
             }
         )
     }
@@ -441,7 +443,7 @@ mod tests {
             g,
             Group {
                 sub_groups: HashMap::new(),
-                info: GroupInfo::Http {
+                info: GroupContent::Http {
                     queries: HashMap::new(),
                     environments: HashMap::new()
                 }

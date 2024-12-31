@@ -413,10 +413,12 @@ enum TaggedBody {
     ApplicationJson(Content<String>),
     Raw {
         content_type: String,
+        #[serde(flatten)]
         data: Content<Vec<u8>>,
     },
     RawText {
         content_type: String,
+        #[serde(flatten)]
         data: Content<String>,
     },
 }
