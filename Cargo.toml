@@ -1,18 +1,20 @@
 [package]
-name = "pigeon"
-version = "0.4.0"
+name = "qwicket"
+version = "0.5.0"
 edition = "2021"
 description = "http query management tool for commandline lovers"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/hardfau1t/pigeon"
-homepage = "https://github.com/hardfau1t/pigeon"
-documentation = "https://docs.rs/pigeon/latest/pigeon/"
+repository = "https://github.com/hardfau1t/qwicket"
+homepage = "https://github.com/hardfau1t/qwicket"
+documentation = "https://docs.rs/qwicket/latest/qwicket/"
 
 [dependencies]
 clap = { version = "4.4.18", features = ["derive"] }
+comfy-table = "7.1.3"
 dirs = "5.0.1"
 http = "1.1.0"
 miette = { version = "7.2.0", features = ["fancy"] }
+mime = "0.3.17"
 reqwest = { version = "0.12.9", default-features = false, features = ["rustls-tls", "http2", "charset", "multipart"] }
 rmp-serde = "1.3.0"
 rmpv = "1.3.0"
@@ -26,6 +28,7 @@ toml = "0.8.14"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 url = "2.5.2"
+yansi = "1.0.1"
 
 [dev-dependencies]
 tracing-test = "0.2.5"

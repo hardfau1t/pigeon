@@ -1,0 +1,94 @@
+type = "http"
+
+[environment.dev]
+scheme = "http"
+host = "localhost"
+port = 8080
+
+[environment.local]
+scheme = "http"
+host = "localhost"
+port = 80
+
+[environment.staging]
+scheme = "https"
+host = "httpbin.org"
+
+[query.get]
+description = "get something"
+path = "/get"
+method = "GET"
+args = [["abc", "def"], ["h", "i"]]
+headers = { "custom" = "hab" }
+
+[query.delete]
+description = "delete something"
+path = "/delete"
+method = "DELETE"
+
+[query.post]
+description = "post json data"
+path = "/post"
+method = "POST"
+body."application/json".inline = '''{"a": "b"}'''
+pre_hook.script = "./example-hooks/httpbin/post.nu"
+
+[query.patch]
+description = "patch xml data"
+path = "/patch"
+method = "PATCH"
+body.raw_text = { content_type = "application/xml", inline = '''<a>content</a>''' }
+
+[query.put]
+description = "put raw binary blob"
+path = "/put"
+method = "PUT"
+body.raw = { content_type = "raw/data", file = '''./example-body/blob''' }
+post_hook.script = "./example-hooks/httpbin/put.nu"
+
+[query.basic_auth]
+description = "basic auth example"
+path = "/basic-auth/user/pass"
+method = "GET"
+basic_auth = { user_name = "user", password = "pass" }
+
+[query.bearer_auth]
+description = "basic auth example"
+path = "/bearer"
+method = "GET"
+bearer_auth = "abc"
+
+[query.drip]
+description = "delayed response"
+path = "/drip"
+method = "GET"
+args = [["duration", "3"], ["numbytes", "30"]]
+
+[query.delay]
+description = "delayed response which results in timeout"
+path = "/delay/10"
+timeout = {secs = 5, nanos = 0}
+method = "GET"
+version = "http11"
+
+[query.form]
+description = "post form data"
+path = "/post"
+method = "POST"
+form = { "key" = "value", "key2" = "value2" }
+
+[query.multipart]
+description = "post form data"
+path = "/post"
+method = "POST"
+[query.multipart.multipart ]
+part1 = { file_name = "key1_file", body."application/json".inline = '{"a": "b"}' }
+part2 = { body.raw_text = {content_type = "text/plain", inline = 'this is some random text'} }
+part3 = { headers = {"headerk1" = "headerv1"}, body."application/json".inline = '{"a": "b"}' }
+
+[group.methods]
+type = "http"
+
+[group.methods.environment.staging]
+scheme = "https"
+host = "httpbin.org"

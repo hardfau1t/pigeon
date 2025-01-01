@@ -4,22 +4,39 @@ mod hook;
 mod parser;
 mod store;
 
-use std::io::Write;
+use std::io::{IsTerminal, Read, Write};
 
 use clap::Parser;
 use miette::{Context, IntoDiagnostic};
-use tracing::debug;
+use tracing::{debug, info, warn};
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, clap::Parser)]
-#[command(author, version, about)]
+#[command(author, version, about, long_about)]
 /// make rest queries, automate
+///
+/// qwicket  Copyright (C) 2024  hardfau1t
+/// This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
+/// This is free software, and you are welcome to redistribute it
+/// under certain conditions; type `show c' for details.
 struct Arguments {
     #[arg(short, long, global=true, action=clap::ArgAction::Count)]
     verbose: u8,
     /// configuration file containing queries
-    #[arg(short, long, default_value = "./pigeon.toml")]
+    #[arg(short, long, default_value = "./qwicket.toml")]
     config_file: std::path::PathBuf,
+
+    /// set store variable(doesn't set in current shell)
+    /// example: --set key=value
+    /// to unset a value, just don't include value
+    /// example: --set key
+    #[arg(long)]
+    set: Option<String>,
+
+    /// get store variable
+    #[arg(long)]
+    get: Option<String>,
+
     /// don't store changes to config store back to disk
     #[arg(short('p'), long("no-persistent"))]
     no_persistent: bool,
@@ -27,32 +44,6 @@ struct Arguments {
     // write output to given file
     #[arg(short, long)]
     output: Option<std::path::PathBuf>,
-
-    // Take the input body from given file
-    // - will read from std in
-    #[arg(short, long)]
-    input: Option<std::path::PathBuf>,
-
-    /// content-type of the data.
-    /// if the services has `kind` then that has higher priority.
-    /// This should be used with `input` and `kind` is not set in services
-    #[arg(
-        short = 't',
-        long,
-        default_value = "text/plain",
-        default_value_if(
-            "content_type_json",
-            clap::builder::ArgPredicate::IsPresent,
-            "application/json"
-        ),
-        requires("input")
-    )]
-    content_type: String,
-
-    /// set content-type to json
-    /// alias to -t "application/json"
-    #[arg(long = "json")]
-    content_type_json: bool,
 
     /// list available options (services/endpoints)
     #[arg(short, long)]
@@ -79,11 +70,19 @@ struct Arguments {
     #[arg(long = "skip-posthook", conflicts_with("skip_hooks"))]
     skip_posthook: bool,
 
+    /// stop before pre hook and write pre hook data to stdout. Useful for developing pre-hook
+    #[arg(long = "inspect-request", conflicts_with_all(["skip_hooks", "skip_prehook"]))]
+    inspect_request: bool,
+
+    /// stop before post hook and write post hook data to stdout. Useful for developing post-hook
+    #[arg(long = "inspect-response", conflicts_with_all(["skip_hooks", "skip_posthook"]))]
+    inspect_response: bool,
+
     /// output collected services as json output
-    #[arg(long("list-json"), conflicts_with_all(["list", "endpoint"]))]
+    #[arg(long("list-json"), conflicts_with("list"))]
     list_json: bool,
 
-    #[arg(required_unless_present_any(["list", "list_json"]))]
+    #[arg(required_unless_present_any(["list", "list_json", "get", "set"]))]
     endpoint: Vec<String>,
     /// arguments for hooks, note to make it unamgious add -- before providing any flags
     /// add another -- separator to separate between prehook flags and post hook flags
@@ -116,38 +115,106 @@ async fn main() -> miette::Result<()> {
 
     debug!(extra_args=?args.args, "Arguments for the scripts");
 
-    let services = parser::Bundle::open(&args.config_file)?;
-    debug!(services=?services, "parsed services");
+    let config = parser::Config::open(&args.config_file)?;
 
-    if args.list {
-        services.view(&args.endpoint);
-    } else if args.list_json {
-        let stdout = std::io::stdout();
-        serde_json::to_writer(stdout, &services)
+    let env = match args.environment {
+        Some(ref v) => v.clone(),
+        None => std::env::var(constants::KEY_CURRENT_ENVIRONMENT)
             .into_diagnostic()
-            .wrap_err("Couldn't write serialized service map")?;
-    } else {
-        let response_body = crate::agent::http::run(
-            &services,
-            &args.endpoint,
-            &args.args,
-            !args.no_persistent,
-            args.dry_run,
-            args.skip_hooks || args.skip_prehook,
-            args.skip_hooks || args.skip_posthook,
-            args.environment.as_deref(),
-            args.input.as_deref(),
-        ).await?;
-        if let Some(body) = response_body {
-            if let Some(output_file) = args.output {
-                std::fs::write(&output_file, body)
-                    .into_diagnostic()
-                    .wrap_err_with(|| format!("Failed to write response body to {output_file:?}"))?
+            .wrap_err_with(|| {
+                format!(
+                    "Couldn't get environment,{} ",
+                    constants::KEY_CURRENT_ENVIRONMENT
+                )
+            })?,
+    };
+
+    let mut config_store = crate::store::Store::with_env(&config.project, env.clone())
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Couldn't read store values of {}", config.project))?;
+
+    config_store.persistent(!args.no_persistent);
+
+    debug!("current config: {config_store:?}");
+
+    if let Some(key) = args.get {
+        let Some(val) = config_store.get(&key) else {
+            miette::bail!("Couldn't find {key} in store")
+        };
+        print!("{val}");
+    } else if let Some(key_val_pair) = args.set {
+        let mut key_val_split = key_val_pair.split('=');
+        let key = key_val_split
+            .next()
+            .ok_or(miette::miette!("Empty key value set"))?;
+        if let Some(value) = key_val_split.next() {
+            info!("Setting \"{key}=\"=\"{value}\"");
+            config_store.insert(key.to_string(), value.to_string());
+        } else {
+            if let Some(value) = config_store.remove(key) {
+                info!("Removed \"{key}\" = \"{value}\"");
             } else {
-                std::io::stdout()
-                    .write_all(&body)
+                warn!("Value for {key} not found, not removing")
+            }
+        }
+    } else {
+        let groups = parser::Group::from_dir(config.api_directory)?;
+
+        debug!(query_set=?groups, "parsed services");
+
+        let query_set = groups
+            .find(&args.endpoint)
+            .ok_or_else(|| miette::miette!("no such query or group found"))?;
+
+        if args.list || args.list_json {
+            debug!(found=?query_set, "found query/group");
+            if args.list_json {
+                query_set.json_print()?;
+            } else {
+                query_set.format_print();
+            }
+        } else {
+            let Some(query_result) = query_set.query else {
+                if let Some(name) = query_set.name {
+                    miette::bail!("{name} is not an query")
+                } else {
+                    miette::bail!("Couldn't find query")
+                }
+            };
+
+            let mut stdin_buffer = Vec::new();
+            let mut stdin = std::io::stdin();
+            // if the input is from pipe then consider else, don't wait for input
+            let stdin_body = if !stdin.is_terminal() {
+                let read_bytes = stdin
+                    .read_to_end(&mut stdin_buffer)
                     .into_diagnostic()
-                    .wrap_err("Failed to write body to stdout")?
+                    .wrap_err("Couldn't read stdin")?;
+                if read_bytes > 0 {
+                    Some(&stdin_buffer[..read_bytes])
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let response_body = query_result
+                .exec_with_args(&args, &env, &mut config_store, stdin_body)
+                .await?;
+
+            if let Some(body) = response_body {
+                if let Some(output_file) = args.output {
+                    std::fs::write(&output_file, body)
+                        .into_diagnostic()
+                        .wrap_err_with(|| {
+                            format!("Failed to write response body to {output_file:?}")
+                        })?
+                } else {
+                    std::io::stdout()
+                        .write_all(&body)
+                        .into_diagnostic()
+                        .wrap_err("Failed to write body to stdout")?
+                }
             }
         }
     }
