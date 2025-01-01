@@ -54,22 +54,22 @@ Set a environment variable `export NEST=prod`.
 Then run `qwicket httpbin foo`. This will print
 ```json
 {
-  "args": {
-    "abc": "def",
-    "h": "i"
-  },
+  "args": {},
   "headers": {
     "Accept": "*/*",
-    "Custom": "hab",
     "Host": "httpbin.org",
     "User-Agent": "qwicket/0.5.0",
-    "X-Amzn-Trace-Id": "Root=1-6774a4c3-661269933d819f9331b7d66c"
+    "X-Amzn-Trace-Id": "Root=1-6774ab20-70aa554a05a25d416fce5f55"
   },
   "origin": "152.58.240.73",
-  "url": "https://httpbin.org/get?abc=def&h=i"
+  "url": "https://httpbin.org/get"
 }
 ```
 You can find more examples under [services](./services) directory. For details check [docs](./docs/readme.md).
+
+### Utilities
+
+You can find useful utilities like completion, starship prompt, scripts/aliases under [utils](./utils) folder
 
 ## LICENSE
 

@@ -133,6 +133,7 @@ impl BasicAuth {
 #[derive(Debug, Deserialize, Clone, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 enum StdinBody {
+    #[serde(rename="body")]
     Tagged(TaggedBody),
     Form(HashMap<String, String>),
     Multipart(HashMap<String, Part>),
