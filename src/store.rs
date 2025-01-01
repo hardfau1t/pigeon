@@ -1,4 +1,4 @@
-//! used to store environment variables for pigeon
+//! used to store environment variables for qwicket
 //! Why not use shell environment variables, because it is hard to use environment variables when you are a independent binary
 
 use std::{

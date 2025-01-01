@@ -18,7 +18,7 @@ struct Arguments {
     #[arg(short, long, global=true, action=clap::ArgAction::Count)]
     verbose: u8,
     /// configuration file containing queries
-    #[arg(short, long, default_value = "./pigeon.toml")]
+    #[arg(short, long, default_value = "./qwicket.toml")]
     config_file: std::path::PathBuf,
 
     /// set store variable(doesn't set in current shell)

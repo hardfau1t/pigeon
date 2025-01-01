@@ -1,5 +1,5 @@
 export def endpoint-path [context: string] {
-    # for inline exported variables like `key=value pigeon` ast is wierd
+    # for inline exported variables like `key=value qwicket` ast is wierd
     let context = $context | str replace -a -r '\w+=\w+' ''
     let ep_path_params = ast $context -j
         | get block
@@ -20,7 +20,7 @@ export def endpoint-path [context: string] {
 
     let half_completed_flag = if $half_completed  { $ep_path_params | last } else { "" }
 
-    let query_map = ^pigeon --list-json ...$complete_params
+    let query_map = ^qwicket --list-json ...$complete_params
     | from json 
     | get group
     let groups = $query_map.sub_groups | columns
@@ -30,9 +30,9 @@ export def endpoint-path [context: string] {
 
 }
 
-export extern pigeon [
+export extern qwicket [
   --verbose(-v),
-  --config-file(-c): path           # configuration file containing queries [default: ./pigeon.toml]
+  --config-file(-c): path           # configuration file containing queries [default: ./qwicket.toml]
   --no-persistent(-p)               # don't store changes to config store back to disk
   --output(-o): path
   --input(-i)

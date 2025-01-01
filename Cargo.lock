@@ -903,33 +903,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
-name = "pigeon"
-version = "0.5.0"
-dependencies = [
- "clap",
- "comfy-table",
- "dirs",
- "http",
- "miette",
- "mime",
- "reqwest",
- "rmp-serde",
- "rmpv",
- "semver",
- "serde",
- "serde_json",
- "subst",
- "thiserror 1.0.69",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "tracing-test",
- "url",
- "yansi",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1018,6 +991,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b9d34b8991d19d98081b46eacdd8eb58c6f2b201139f7c5f643cc155a633af"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "qwicket"
+version = "0.5.0"
+dependencies = [
+ "clap",
+ "comfy-table",
+ "dirs",
+ "http",
+ "miette",
+ "mime",
+ "reqwest",
+ "rmp-serde",
+ "rmpv",
+ "semver",
+ "serde",
+ "serde_json",
+ "subst",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-test",
+ "url",
+ "yansi",
 ]
 
 [[package]]
