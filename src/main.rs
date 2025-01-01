@@ -12,8 +12,13 @@ use tracing::{debug, info, warn};
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, clap::Parser)]
-#[command(author, version, about)]
+#[command(author, version, about, long_about)]
 /// make rest queries, automate
+///
+/// qwicket  Copyright (C) 2024  hardfau1t
+/// This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
+/// This is free software, and you are welcome to redistribute it
+/// under certain conditions; type `show c' for details.
 struct Arguments {
     #[arg(short, long, global=true, action=clap::ArgAction::Count)]
     verbose: u8,
