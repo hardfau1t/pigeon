@@ -64,6 +64,13 @@ path = "/drip"
 method = "GET"
 args = [["duration", "3"], ["numbytes", "30"]]
 
+[query.delay]
+description = "delayed response which results in timeout"
+path = "/delay/10"
+timeout = {secs = 5, nanos = 0}
+method = "GET"
+version = "http11"
+
 [query.form]
 description = "post form data"
 path = "/post"
