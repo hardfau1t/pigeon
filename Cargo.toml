@@ -32,3 +32,7 @@ yansi = "1.0.1"
 
 [dev-dependencies]
 tracing-test = "0.2.5"
+
+[profile.release]
+codegen-units = 1
+lto = true
