@@ -1,5 +1,5 @@
 [custom.qwicket]
-description = "show pigeon environment"
+description = "show qwicket environment"
 command = "$env | get -i NEST | default 🪹"
-files = ["pigeon.toml"]
+files = ["qwicket.toml"]
 format = "[$output 🐦 ](bold yellow)"
